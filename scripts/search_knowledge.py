@@ -1,4 +1,4 @@
-"""Run an offline hybrid retrieval demo and print citation-preserving results."""
+"""运行离线混合检索演示并输出保留引用的结果。"""
 
 import argparse
 import json

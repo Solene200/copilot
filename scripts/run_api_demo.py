@@ -1,4 +1,4 @@
-"""Exercise the Phase 5 lifecycle against a running local HTTP server."""
+"""通过正在运行的本地 HTTP 服务演示 Phase 5 生命周期。"""
 
 import argparse
 import json
@@ -16,7 +16,7 @@ def request_json(
     *,
     headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Send one JSON request using only the standard library."""
+    """仅使用标准库发送一次 JSON 请求。"""
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     request = Request(
         url,
@@ -29,7 +29,7 @@ def request_json(
 
 
 def wait_for_status(base_url: str, investigation_id: str, expected: str) -> dict[str, Any]:
-    """Poll the public status resource with a bounded local timeout."""
+    """在有界本地超时内轮询公开状态资源。"""
     for _ in range(100):
         result = request_json("GET", f"{base_url}/api/v1/investigations/{investigation_id}")
         if result["status"] == expected:
@@ -39,7 +39,7 @@ def wait_for_status(base_url: str, investigation_id: str, expected: str) -> dict
 
 
 def main() -> None:
-    """Create, observe, approve, and print one report summary."""
+    """创建、观察并批准一次调查,最后输出报告摘要。"""
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument(

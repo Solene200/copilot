@@ -1,4 +1,4 @@
-"""Typed application settings loaded from environment variables."""
+"""从环境变量加载的强类型应用配置。"""
 
 from enum import StrEnum
 from functools import cache
@@ -10,7 +10,7 @@ from incident_copilot import __version__
 
 
 class RuntimeEnvironment(StrEnum):
-    """Supported runtime environments for application configuration."""
+    """应用配置支持的运行环境。"""
 
     DEVELOPMENT = "development"
     TEST = "test"
@@ -19,7 +19,7 @@ class RuntimeEnvironment(StrEnum):
 
 
 class LogLevel(StrEnum):
-    """Log levels accepted by the standard-library logging system."""
+    """标准库日志系统接受的日志级别。"""
 
     DEBUG = "DEBUG"
     INFO = "INFO"
@@ -29,21 +29,21 @@ class LogLevel(StrEnum):
 
 
 class CheckpointBackend(StrEnum):
-    """Supported LangGraph persistence adapters."""
+    """支持的 LangGraph 持久化 Adapter。"""
 
     MEMORY = "memory"
     POSTGRES = "postgres"
 
 
 class MetricsBackend(StrEnum):
-    """Supported metric provider adapters."""
+    """支持的指标 Provider Adapter。"""
 
     FIXTURE = "fixture"
     PROMETHEUS = "prometheus"
 
 
 class Settings(BaseSettings):
-    """Application configuration with safe offline defaults."""
+    """带有安全离线默认值的应用配置。"""
 
     model_config = SettingsConfigDict(
         env_prefix="INCIDENT_COPILOT_",
@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     @field_validator("api_prefix")
     @classmethod
     def validate_api_prefix(cls, value: str) -> str:
-        """Require a normalized non-root API prefix for future routes."""
+        """要求后续路由使用规范化且非根路径的 API 前缀。"""
         value = value.strip()
         if not value.startswith("/"):
             raise ValueError("api_prefix must start with '/'")
@@ -81,5 +81,5 @@ class Settings(BaseSettings):
 
 @cache
 def get_settings() -> Settings:
-    """Return one settings instance per process."""
+    """为每个进程返回一个配置实例。"""
     return Settings()

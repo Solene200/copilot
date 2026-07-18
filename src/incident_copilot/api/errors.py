@@ -1,4 +1,4 @@
-"""FastAPI exception-to-response mappings."""
+"""FastAPI 异常到响应的映射。"""
 
 import logging
 from typing import cast
@@ -21,7 +21,7 @@ def _request_id(request: Request) -> str:
 
 
 async def handle_application_error(request: Request, exc: Exception) -> JSONResponse:
-    """Map a known application exception to the public error envelope."""
+    """把已知应用异常映射为公开错误响应。"""
     if not isinstance(exc, IncidentCopilotError):
         raise exc
     response = ErrorResponse(
@@ -36,7 +36,7 @@ async def handle_application_error(request: Request, exc: Exception) -> JSONResp
 
 
 async def handle_request_validation_error(request: Request, exc: Exception) -> JSONResponse:
-    """Return validation failures without echoing potentially sensitive inputs."""
+    """返回校验失败信息,但不回显可能敏感的输入。"""
     if not isinstance(exc, RequestValidationError):
         raise exc
     issues: list[dict[str, JsonValue]] = []
@@ -63,7 +63,7 @@ async def handle_request_validation_error(request: Request, exc: Exception) -> J
 
 
 async def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
-    """Log unexpected failures and return a non-sensitive stable envelope."""
+    """记录意外故障并返回稳定且不含敏感信息的响应。"""
     request_id = _request_id(request)
     logger.error(
         "Unhandled application error",
@@ -78,7 +78,7 @@ async def handle_unexpected_error(request: Request, exc: Exception) -> JSONRespo
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    """Install all application-owned exception handlers."""
+    """注册应用负责的全部异常处理器。"""
     app.add_exception_handler(IncidentCopilotError, handle_application_error)
     app.add_exception_handler(RequestValidationError, handle_request_validation_error)
     app.add_exception_handler(Exception, handle_unexpected_error)

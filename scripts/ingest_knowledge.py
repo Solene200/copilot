@@ -1,4 +1,4 @@
-"""Initialize the deterministic local knowledge index and print measured counts."""
+"""初始化确定性本地知识索引并输出实际统计数量。"""
 
 import argparse
 import json

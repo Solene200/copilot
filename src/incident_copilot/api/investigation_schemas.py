@@ -1,4 +1,4 @@
-"""Versioned HTTP schemas for investigation lifecycle operations."""
+"""调查生命周期操作使用的版本化 HTTP Schema。"""
 
 import hashlib
 import json
@@ -24,7 +24,7 @@ from incident_copilot.investigations.models import InvestigationRecord, Investig
 
 
 class CreateInvestigationRequest(ApiModel):
-    """Validated user scope and bounded execution policy."""
+    """经过校验的用户调查范围和有界执行策略。"""
 
     query: str = Field(min_length=1, max_length=10_000)
     services: tuple[str, ...] = Field(min_length=1, max_length=20)
@@ -52,7 +52,7 @@ class CreateInvestigationRequest(ApiModel):
         return self
 
     def fingerprint(self) -> str:
-        """Hash the semantic request before server-generated IDs are introduced."""
+        """在引入服务端生成的 ID 前计算语义请求哈希。"""
         canonical = json.dumps(
             self.model_dump(mode="json"),
             ensure_ascii=False,
@@ -62,7 +62,7 @@ class CreateInvestigationRequest(ApiModel):
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def to_incident(self, incident_id: str) -> IncidentContext:
-        """Translate the transport request into the domain boundary."""
+        """把传输层请求转换为领域边界对象。"""
         return IncidentContext(
             incident_id=incident_id,
             raw_query=self.query,
@@ -77,11 +77,11 @@ class CreateInvestigationRequest(ApiModel):
 
 
 class ResumeInvestigationRequest(HumanFeedback):
-    """Public resume body reusing the strict domain feedback contract."""
+    """复用严格领域反馈契约的公开恢复请求体。"""
 
 
 class InvestigationResponse(ApiModel):
-    """Public task projection without raw graph checkpoint values."""
+    """不包含 Graph checkpoint 原始值的公开任务投影。"""
 
     schema_version: str = "1.0"
     investigation_id: str
@@ -104,7 +104,7 @@ class InvestigationResponse(ApiModel):
         *,
         replayed: bool = False,
     ) -> "InvestigationResponse":
-        """Build one stable response from repository metadata."""
+        """根据 Repository 元数据构造稳定响应。"""
         report = (
             IncidentReport.model_validate(redact_value(record.report.model_dump(mode="python")))
             if record.report is not None

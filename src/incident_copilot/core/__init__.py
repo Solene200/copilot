@@ -1,1 +1,1 @@
-"""Cross-cutting application infrastructure."""
+"""应用的横切基础设施。"""

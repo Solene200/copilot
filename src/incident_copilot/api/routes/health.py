@@ -1,4 +1,4 @@
-"""Liveness endpoint."""
+"""存活检查接口。"""
 
 from typing import cast
 
@@ -12,7 +12,7 @@ router = APIRouter(tags=["system"])
 
 @router.get("/health", response_model=HealthResponse)
 async def health(request: Request) -> HealthResponse:
-    """Report process liveness without requiring optional external services."""
+    """报告进程存活状态,但不要求可选外部服务可用。"""
     settings = cast(Settings, request.app.state.settings)
     return HealthResponse(
         service=settings.app_name,

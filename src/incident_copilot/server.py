@@ -1,4 +1,4 @@
-"""Cross-platform Uvicorn entry point with psycopg-compatible Windows asyncio."""
+"""跨平台 Uvicorn 入口,并在 Windows 上兼容 psycopg 的 asyncio 要求。"""
 
 import argparse
 import asyncio
@@ -7,7 +7,7 @@ import uvicorn
 
 
 def main() -> None:
-    """Run Uvicorn, selecting an event loop supported by async psycopg on Windows."""
+    """运行 Uvicorn,并在 Windows 上选择异步 psycopg 支持的事件循环。"""
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", default=8000, type=int)

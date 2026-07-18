@@ -1,1 +1,1 @@
-"""Repository-local offline demo and maintenance scripts."""
+"""仓库内使用的离线演示和维护脚本。"""

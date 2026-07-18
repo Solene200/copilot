@@ -1,4 +1,4 @@
-"""Run the versioned no-network evaluation and write raw plus summary artifacts."""
+"""运行版本化的无网络评估,并写入原始结果和汇总产物。"""
 
 import argparse
 import asyncio
@@ -8,7 +8,7 @@ from incident_copilot.evaluation import OfflineEvaluationRunner, load_evaluation
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse a deliberately small offline evaluation CLI."""
+    """解析参数数量受到刻意限制的离线评估命令行。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, help="Optional versioned dataset JSON path")
     parser.add_argument(
@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
 
 
 async def main() -> None:
-    """Validate the dataset, execute all samples, and print the artifact location."""
+    """校验数据集、执行全部样例并输出产物位置。"""
     args = parse_args()
     dataset = load_evaluation_dataset(args.dataset)
     runner = OfflineEvaluationRunner(

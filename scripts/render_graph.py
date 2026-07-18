@@ -1,4 +1,4 @@
-"""Render Mermaid directly from the currently compiled interactive graph."""
+"""直接根据当前编译的交互式 Graph 生成 Mermaid。"""
 
 import argparse
 from pathlib import Path
@@ -7,7 +7,7 @@ from incident_copilot.graph.visualization import current_mermaid, extract_docume
 
 
 def main() -> None:
-    """Print current Mermaid or check that the committed document is current."""
+    """输出当前 Mermaid,或者检查已提交文档是否为最新版本。"""
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", type=Path, help="fail if a documented Mermaid fence is stale")
     arguments = parser.parse_args()

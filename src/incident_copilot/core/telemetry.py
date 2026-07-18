@@ -1,4 +1,4 @@
-"""Default-off OpenTelemetry spans for graph, tool, and model boundaries."""
+"""默认关闭的 Graph、工具和模型边界 OpenTelemetry Span。"""
 
 import os
 from collections.abc import Awaitable, Callable
@@ -14,14 +14,14 @@ OTEL_ENABLED_ENV = "INCIDENT_COPILOT_OTEL_ENABLED"
 
 
 def telemetry_enabled() -> bool:
-    """Require an explicit truthy switch; importing the application never enables export."""
+    """要求显式启用开关,导入应用不会自动开启遥测导出。"""
     return os.getenv(OTEL_ENABLED_ENV, "").strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def trace_async(
     name: str, *, component: str
 ) -> Callable[[Callable[ParamT, Awaitable[ReturnT]]], Callable[ParamT, Awaitable[ReturnT]]]:
-    """Trace an async boundary only when the optional OTel integration is enabled."""
+    """仅在启用可选 OTel 集成时追踪异步边界。"""
 
     def decorator(
         function: Callable[ParamT, Awaitable[ReturnT]],

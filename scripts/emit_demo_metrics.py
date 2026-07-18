@@ -1,4 +1,4 @@
-"""Emit a deterministic incident signal through OTLP for the local demo stack."""
+"""通过 OTLP 向本地演示环境发送确定性事故信号。"""
 
 import argparse
 import os
@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
-    """Publish synthetic but explicitly labelled payment-service demo metrics."""
+    """发布明确标记为合成数据的 payment-service 演示指标。"""
     args = parse_args()
     if args.duration_seconds < 0 or args.interval_seconds <= 0:
         raise SystemExit("duration must be non-negative and interval must be positive")

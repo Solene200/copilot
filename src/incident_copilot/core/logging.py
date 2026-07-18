@@ -1,4 +1,4 @@
-"""Structured JSON logging with conservative secret redaction."""
+"""采用保守秘密脱敏策略的结构化 JSON 日志。"""
 
 import json
 import logging
@@ -36,7 +36,7 @@ _STANDARD_LOG_RECORD_FIELDS: Final = frozenset(logging.makeLogRecord({}).__dict_
 
 
 def redact_text(value: str) -> str:
-    """Redact common inline credential formats from a string."""
+    """从字符串中脱敏常见的内联凭据格式。"""
     value = _AUTHORIZATION_PATTERN.sub(rf"\1{REDACTED}", value)
     value = _BEARER_PATTERN.sub(rf"\1{REDACTED}", value)
     return _KEY_VALUE_PATTERN.sub(rf"\1{REDACTED}", value)
@@ -50,7 +50,7 @@ def _is_sensitive_key(key: str) -> bool:
 
 
 def redact_value(value: Any, *, key: str | None = None) -> Any:
-    """Recursively redact values whose keys or contents look sensitive."""
+    """递归脱敏键名或内容疑似敏感的数据。"""
     if key is not None and _is_sensitive_key(key):
         return REDACTED
     if isinstance(value, str):
@@ -65,7 +65,7 @@ def redact_value(value: Any, *, key: str | None = None) -> Any:
 
 
 class JsonFormatter(logging.Formatter):
-    """Serialize standard log records and safe extras as one JSON object."""
+    """把标准日志记录和安全扩展字段序列化为一个 JSON 对象。"""
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
@@ -83,7 +83,7 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure_logging(level: LogLevel | str = LogLevel.INFO) -> None:
-    """Configure process logging idempotently using a JSON console handler."""
+    """使用 JSON 控制台处理器幂等配置进程日志。"""
     resolved_level = level.value if isinstance(level, LogLevel) else level.upper()
     logging.config.dictConfig(
         {

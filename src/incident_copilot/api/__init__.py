@@ -1,1 +1,1 @@
-"""HTTP transport layer."""
+"""HTTP 传输层。"""

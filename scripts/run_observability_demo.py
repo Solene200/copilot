@@ -1,4 +1,4 @@
-"""Verify OTLP-to-Prometheus ingestion and run a mixed-source investigation."""
+"""验证 OTLP 到 Prometheus 的数据摄取,并运行混合数据源调查。"""
 
 import argparse
 import asyncio

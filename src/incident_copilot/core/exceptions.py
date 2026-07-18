@@ -1,4 +1,4 @@
-"""Application exception hierarchy independent from transport frameworks."""
+"""不依赖传输框架的应用异常层次。"""
 
 from enum import StrEnum
 from typing import ClassVar
@@ -7,7 +7,7 @@ from pydantic import JsonValue
 
 
 class ErrorCode(StrEnum):
-    """Stable error codes exposed by transport adapters."""
+    """传输 Adapter 对外公开的稳定错误码。"""
 
     DOMAIN_VALIDATION = "domain_validation_error"
     CONFIGURATION = "configuration_error"
@@ -17,7 +17,7 @@ class ErrorCode(StrEnum):
 
 
 class IncidentCopilotError(Exception):
-    """Base exception carrying a safe public message and structured details."""
+    """携带安全公开消息和结构化详情的基础异常。"""
 
     code: ClassVar[ErrorCode] = ErrorCode.INTERNAL
     status_code: ClassVar[int] = 500
@@ -29,28 +29,28 @@ class IncidentCopilotError(Exception):
 
 
 class DomainValidationError(IncidentCopilotError):
-    """Raised when a valid transport request violates domain rules."""
+    """传输请求格式有效但违反领域规则时抛出。"""
 
     code: ClassVar[ErrorCode] = ErrorCode.DOMAIN_VALIDATION
     status_code: ClassVar[int] = 400
 
 
 class ConfigurationError(IncidentCopilotError):
-    """Raised when runtime configuration cannot support an operation."""
+    """运行时配置无法支持某项操作时抛出。"""
 
     code: ClassVar[ErrorCode] = ErrorCode.CONFIGURATION
     status_code: ClassVar[int] = 500
 
 
 class ResourceNotFoundError(IncidentCopilotError):
-    """Raised when a requested application resource does not exist."""
+    """请求的应用资源不存在时抛出。"""
 
     code: ClassVar[ErrorCode] = ErrorCode.NOT_FOUND
     status_code: ClassVar[int] = 404
 
 
 class ResourceConflictError(IncidentCopilotError):
-    """Raised when a state transition or idempotency key cannot be applied."""
+    """状态转换或幂等键无法应用时抛出。"""
 
     code: ClassVar[ErrorCode] = ErrorCode.CONFLICT
     status_code: ClassVar[int] = 409

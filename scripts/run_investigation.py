@@ -1,4 +1,4 @@
-"""Run the complete offline payment-service investigation and print its report."""
+"""运行完整的离线 payment-service 调查并输出报告。"""
 
 import asyncio
 import json
@@ -8,7 +8,7 @@ from incident_copilot.tools.providers.fixture import FixtureProvider
 
 
 async def main() -> None:
-    """Execute the no-key Fixture/RAG/Fake-Model graph once."""
+    """执行一次不需要密钥的 Fixture/RAG/Fake Model Graph。"""
     incident = FixtureProvider.payment_service().fixture.incident
     graph = build_offline_investigation_graph()
     state = await graph.ainvoke(create_initial_state(incident))

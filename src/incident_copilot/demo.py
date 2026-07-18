@@ -1,4 +1,4 @@
-"""Deterministic helpers used only by the portfolio demonstration."""
+"""仅供作品集演示使用的确定性辅助函数。"""
 
 import asyncio
 from datetime import UTC, datetime, timedelta
@@ -14,7 +14,7 @@ async def wait_for_metric(
     *,
     timeout_seconds: float,
 ) -> tuple[Evidence, ...]:
-    """Require two successful scrape observations before the demo graph starts."""
+    """演示 Graph 启动前要求观察到两次成功抓取。"""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_seconds
     last_error: Exception | None = None
@@ -54,7 +54,7 @@ async def wait_for_metric(
 
 
 def shift_fixture_to_now(fixture: IncidentFixture, reference_end: datetime) -> IncidentFixture:
-    """Move fixture envelope times to a live metric window without changing evidence claims."""
+    """把 Fixture 时间移动到实时指标窗口,但不改变证据陈述。"""
     delta = reference_end - fixture.incident.end_time
 
     def shifted(value: datetime | None) -> datetime | None:
