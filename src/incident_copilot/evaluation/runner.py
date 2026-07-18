@@ -1,4 +1,9 @@
-"""Offline evaluation orchestration and auditable artifact generation."""
+"""Offline evaluation orchestration and auditable artifact generation.
+
+中文教学说明: Runner 用版本化 Fixture、Fake Model 和本地 RAG 执行可复现回归评估。
+Ground truth 只在 Graph 完成后参与指标计算, 不进入 ModelContext、工具参数或检索过滤。
+每个样例都写入原始结果, 聚合报告不会隐藏失败样例或不可用指标。
+"""
 
 import json
 import uuid
@@ -38,14 +43,22 @@ ROOT_CAUSE_ACCURACY_THRESHOLD = 0.75
 
 
 class OfflineEvaluationRunner:
-    """Run fixture/Fake-Model evaluation without exposing labels to the graph."""
+    """Run fixture/Fake-Model evaluation without exposing labels to the graph.
+
+    中文: 该评估证明管线和指标计算可运行, 不证明生产泛化准确率。LangSmith tracing 默认
+    关闭, 只有调用者显式启用时才允许外部发送 trace。
+    """
 
     def __init__(self, *, enable_langsmith: bool = False, project_name: str | None = None) -> None:
         self._enable_langsmith = enable_langsmith
         self._project_name = project_name or "incident-copilot-offline-evaluation"
 
     async def run(self, dataset: EvaluationDataset, output_dir: Path) -> EvaluationSummary:
-        """Evaluate every sample, retain failures, and write raw plus aggregate artifacts."""
+        """Evaluate every sample, retain failures, and write raw plus aggregate artifacts.
+
+        中文: 顺序执行全部样例并捕获单样例异常。无论成功或失败都会进入 raw JSONL 和
+        summary 分母, 从而避免只报告成功样例造成的选择偏差。
+        """
         started_at = datetime.now(UTC)
         run_id = f"evalrun_{started_at:%Y%m%dT%H%M%SZ}_{uuid.uuid4().hex[:8]}"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -65,6 +78,7 @@ class OfflineEvaluationRunner:
                     )
                 results.append(result)
 
+        # 中文: 先落逐样例原始数据, 汇总指标始终可以回溯到具体输入和报告。
         raw_path.write_text(
             "".join(
                 json.dumps(result.model_dump(mode="json"), ensure_ascii=False, sort_keys=True)
@@ -108,9 +122,11 @@ class OfflineEvaluationRunner:
         retriever: Any,
         run_id: str,
     ) -> EvaluationSampleResult:
+        """执行单个无标签推理, 再把结果与 evaluator-only ground truth 比较。"""
         fixture_provider = FixtureProvider.from_path(resolve_fixture_path(sample.fixture_path))
         incident = fixture_provider.fixture.incident
 
+        # 中文: 检索 filter 来自事故输入, 不能读取 ground_truth.affected_services。
         retrieval = retriever.search(
             SearchQuery(
                 query=sample.retrieval_query,
@@ -144,6 +160,7 @@ class OfflineEvaluationRunner:
         )
         latency_ms = (perf_counter() - started) * 1_000
         report = state["final_report"]
+        # 中文: 从这里开始才读取 ground truth 计算质量指标; 上方 Graph 已完整结束。
         actual_calls = self._actual_tool_calls(state)
         predicted_failure_type = classify_failure_type(report.root_cause)
         root_recall = root_cause_term_recall(
@@ -189,6 +206,7 @@ class OfflineEvaluationRunner:
 
     @staticmethod
     def _actual_tool_calls(state: InvestigationState) -> tuple[ActualToolCall, ...]:
+        """从真实 StepResult 重建跨轮次工具调用, 不只查看最后一轮 plan。"""
         calls: list[ActualToolCall] = []
         for result in state.get("completed_steps", ()):
             arguments = {key: json_argument_value(value) for key, value in result.arguments.items()}
@@ -203,6 +221,7 @@ class OfflineEvaluationRunner:
         return tuple(sorted(calls, key=lambda item: (item.tool_name, str(item.arguments))))
 
     def _tracing_context(self) -> AbstractContextManager[object]:
+        """构造显式 tracing 开关, 避免环境变量意外让默认评估联网。"""
         try:
             from langsmith import tracing_context
         except ImportError:

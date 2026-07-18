@@ -1,4 +1,9 @@
-"""Allow-listed tool registry with validation, timeout, retry, and telemetry."""
+"""Allow-listed tool registry with validation, timeout, retry, and telemetry.
+
+中文教学说明: Registry 是 Graph 与 Provider 之间的统一安全边界。Graph 只能调用已注册
+工具; Registry 在进入 Provider 前校验参数和预算, 在返回 Graph 前校验证据来源、服务、
+时间范围和数量。Provider 异常会被转换为稳定 ToolError, 不把厂商细节泄漏给编排层。
+"""
 
 import asyncio
 import logging
@@ -42,7 +47,11 @@ ToolHandler = Callable[[InputT, QueryContext], Awaitable[Sequence[Evidence]]]
 
 @dataclass(frozen=True, slots=True)
 class ToolDefinition(Generic[InputT]):
-    """One allow-listed tool and the policy applied to its provider call."""
+    """One allow-listed tool and the policy applied to its provider call.
+
+    中文: 定义把工具名、Pydantic 输入、异步 handler、允许来源和执行策略绑定在一起。
+    Graph 计划只能引用这里存在的 name。
+    """
 
     name: str
     input_model: type[InputT]
@@ -63,7 +72,11 @@ class ToolDefinition(Generic[InputT]):
 
 
 class ToolRegistry:
-    """Execute only registered tools through one policy and error boundary."""
+    """Execute only registered tools through one policy and error boundary.
+
+    中文: Registry 不维护整个调查的共享计数; 调查级预算由 Graph State 负责。它只执行
+    当前调用的 remaining budget、deadline、单次 timeout 和有限 retry。
+    """
 
     def __init__(self, *, retry_backoff_seconds: float = 0.01) -> None:
         if retry_backoff_seconds < 0 or retry_backoff_seconds > 1:
@@ -77,7 +90,10 @@ class ToolRegistry:
         return tuple(sorted(self._tools))
 
     def register(self, definition: ToolDefinition[InputT]) -> None:
-        """Register one definition and reject accidental name replacement."""
+        """Register one definition and reject accidental name replacement.
+
+        中文: 禁止静默覆盖同名工具, 防止装配顺序意外改变实际 Provider。
+        """
         if definition.name in self._tools:
             raise ToolRegistrationError(f"tool already registered: {definition.name}")
         self._tools[definition.name] = cast(ToolDefinition[ToolInput], definition)
@@ -89,7 +105,11 @@ class ToolRegistry:
         arguments: Mapping[str, object],
         context: QueryContext,
     ) -> ToolExecutionResult:
-        """Validate and execute a tool within budget, timeout, and retry limits."""
+        """Validate and execute a tool within budget, timeout, and retry limits.
+
+        中文执行顺序: allow-list → 调用预算 → Pydantic 参数 → deadline/timeout → Provider
+        → Evidence 边界校验 → 结构化结果。只有 retryable 错误才会重试。
+        """
         definition = self._tools.get(name)
         if definition is None:
             raise ToolNotFoundError(f"unknown tool: {name}")
@@ -97,6 +117,7 @@ class ToolRegistry:
             raise ToolBudgetExceededError("tool call budget exhausted")
 
         try:
+            # 中文: 外部或模型生成的 arguments 必须先收敛到具体工具 Schema。
             tool_input = definition.input_model.model_validate(arguments)
         except ValidationError as exc:
             raise ToolInvalidArgumentsError(f"invalid arguments for tool: {name}") from exc
@@ -119,6 +140,7 @@ class ToolRegistry:
                     operation=name,
                 )
             else:
+                # 中文: 单次 timeout 不能超过调用方传入的全局剩余 deadline。
                 attempt_timeout = min(definition.timeout_seconds, remaining_seconds)
                 try:
                     evidence = await asyncio.wait_for(
@@ -163,6 +185,7 @@ class ToolRegistry:
                     return result
 
             if failure.retryable and attempts < max_attempts:
+                # 中文: 退避也必须装得进剩余 deadline, 否则立即返回归一化失败。
                 backoff = self._retry_backoff_seconds * (2 ** (attempts - 1))
                 remaining_seconds = (context.deadline - datetime.now(UTC)).total_seconds()
                 if backoff < remaining_seconds:
@@ -196,6 +219,11 @@ class ToolRegistry:
         evidence: Sequence[Evidence],
         tool_input: ToolInput,
     ) -> tuple[Evidence, ...]:
+        """验证 Provider 结果仍位于调用者请求的来源、服务和时间边界内。
+
+        Provider 是外部边界, 即使返回了 ``Evidence`` 实例也不能默认可信。该检查防止
+        错服务、越界时间窗、错误来源或超量数据进入 Graph State。
+        """
         bounded_inputs = (
             TimeRangeToolInput,
             GetServiceTopologyInput,

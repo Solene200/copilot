@@ -1,4 +1,9 @@
-"""Idempotent ingestion and reciprocal-rank hybrid retrieval."""
+"""Idempotent ingestion and reciprocal-rank hybrid retrieval.
+
+中文教学说明: 本模块同时编排知识写入与查询。写入时按 document ID 原子替换 Chunk;
+查询时对同一改写查询执行 BM25 和向量召回, 再用 RRF 融合、content hash 去重并保留
+原始 Citation。默认实现完全本地且确定性可复现。
+"""
 
 from collections import defaultdict
 from collections.abc import Callable, Sequence
@@ -21,7 +26,11 @@ from incident_copilot.rag.vector_store import VectorStore
 
 
 class HybridRetriever:
-    """Combine BM25 and vector candidates with citation-preserving RRF."""
+    """Combine BM25 and vector candidates with citation-preserving RRF.
+
+    中文: BM25 原始分数与 cosine 相似度不在同一量纲, 因此不直接相加。RRF 只使用各
+    检索器中的排名, 形成更容易解释和稳定测试的混合基线。
+    """
 
     def __init__(
         self,
@@ -59,7 +68,11 @@ class HybridRetriever:
         return len(self._chunks)
 
     def ingest(self, documents: Sequence[KnowledgeDocument]) -> IngestResult:
-        """Replace supplied documents by ID and rebuild the deterministic lexical view."""
+        """Replace supplied documents by ID and rebuild the deterministic lexical view.
+
+        中文: 输入文档先切分和 embedding。只有全部新记录准备成功后才替换向量后端并
+        更新内存文档/Chunk 映射, 失败不会留下半更新的 Retriever 状态。
+        """
         document_ids = [document.document_id for document in documents]
         if len(document_ids) != len(set(document_ids)):
             raise ValueError("ingest input contains duplicate document IDs")
@@ -77,6 +90,7 @@ class HybridRetriever:
         )
 
         updated_documents = dict(self._documents)
+        # 中文: 同 document ID 的旧 Chunk 全部移除, 避免文档更新后残留过期向量。
         updated_chunks = {
             chunk_id: chunk
             for chunk_id, chunk in self._chunks.items()
@@ -100,8 +114,13 @@ class HybridRetriever:
         )
 
     def search(self, request: SearchQuery) -> RetrievalResult:
-        """Rewrite, retrieve, fuse, content-dedupe, and return bounded ranked hits."""
+        """Rewrite, retrieve, fuse, content-dedupe, and return bounded ranked hits.
+
+        中文: 读取 query/top_k/metadata filter; 返回 original/rewritten query、排序命中和
+        索引规模。Citation 始终来自原 KnowledgeChunk, 不由检索器重新编造。
+        """
         rewritten = self._rewriter.rewrite(request.query)
+        # 中文: 先扩大候选池再融合, 最终仍严格裁剪到用户请求的 top_k。
         candidate_k = min(200, max(request.top_k * self._candidate_multiplier, 20))
         lexical = self._lexical_index.search(
             rewritten,
@@ -127,11 +146,13 @@ class HybridRetriever:
                 sources[chunk_id].add(source_name)
                 chunks[chunk_id] = candidate.chunk
 
+        # 中文: 使用稳定 chunk_id 作为同分 tie-break, 保证离线回归结果可复现。
         ordered_ids = sorted(fused_scores, key=lambda item: (-fused_scores[item], item))
         unique_ids: list[str] = []
         seen_hashes: set[str] = set()
         for chunk_id in ordered_ids:
             content_hash = chunks[chunk_id].content_hash
+            # 中文: 不同 Chunk ID 若内容相同只保留排名更高者, 同时保留其原始引用。
             if content_hash in seen_hashes:
                 continue
             seen_hashes.add(content_hash)
