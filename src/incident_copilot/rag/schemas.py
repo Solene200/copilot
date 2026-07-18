@@ -1,7 +1,6 @@
 """Validated knowledge document, chunk, and retrieval value objects."""
 
 import hashlib
-from datetime import datetime
 from enum import StrEnum
 from typing import Self
 from urllib.parse import urlsplit
@@ -150,6 +149,22 @@ class EmbeddedChunk(DomainModel):
     embedding_version: str = Field(min_length=1, max_length=64)
 
 
+class ScoredChunk(DomainModel):
+    """Backend-local candidate before reciprocal-rank fusion."""
+
+    chunk: KnowledgeChunk
+    score: float = Field(ge=0.0)
+
+
+class IngestResult(DomainModel):
+    """Measured index state after one idempotent ingest operation."""
+
+    input_document_count: int = Field(ge=0)
+    indexed_document_count: int = Field(ge=0)
+    indexed_chunk_count: int = Field(ge=0)
+    embedded_chunk_count: int = Field(ge=0)
+
+
 class MetadataFilter(DomainModel):
     """Allow-listed metadata constraints shared by every retrieval backend."""
 
@@ -235,8 +250,3 @@ def chunk_matches_filter(chunk: KnowledgeChunk, metadata_filter: MetadataFilter)
         metadata_filter.effective_after is not None
         and chunk.effective_at <= metadata_filter.effective_after
     )
-
-
-def utc_timestamp(value: datetime) -> datetime:
-    """Keep a typed helper available to adapters that deserialize timestamps."""
-    return value
