@@ -1,0 +1,81 @@
+{
+  "schema_version": "1.0",
+  "dataset_id": "dataset_incident_copilot_offline",
+  "version": "1.0.0",
+  "description": "Three sanitized fixture incidents with evaluator-only causal, retrieval, tool, evidence, and citation labels.",
+  "samples": [
+    {
+      "sample_id": "eval_payment_pool_exhaustion",
+      "fixture_path": "data/incidents/payment-service-pool-exhaustion.json",
+      "retrieval_query": "payment database connection pool saturation after max_connections configuration reduction",
+      "retrieval_top_k": 5,
+      "ground_truth": {
+        "affected_services": ["payment-service"],
+        "failure_type": "database_connection_pool_exhaustion",
+        "root_cause_terms": ["db.pool.max_connections", "50", "5", "pool", "connection acquisition"],
+        "relevant_evidence_ids": [
+          "ev_payment_log_pool_timeout",
+          "ev_payment_metric_pool_saturation",
+          "ev_payment_trace_db_wait",
+          "ev_payment_change_pool_limit",
+          "ev_payment_topology_dependencies"
+        ],
+        "relevant_document_ids": ["doc_runbook_payment_db_pool", "doc_incident_payment_pool_20260628"],
+        "expected_tools": [
+          {"tool_name": "search_logs", "arguments": {"service": "payment-service", "query": "connection acquisition"}},
+          {"tool_name": "query_metrics", "arguments": {"service": "payment-service", "metric_name": "db.pool.utilization", "aggregation": "max"}},
+          {"tool_name": "query_traces", "arguments": {"service": "payment-service", "operation": "POST /payments", "status": "timeout"}},
+          {"tool_name": "get_recent_changes", "arguments": {"service": "payment-service", "change_type": "configuration"}},
+          {"tool_name": "get_service_topology", "arguments": {"service": "payment-service", "depth": 1}},
+          {"tool_name": "search_runbooks", "arguments": {"service": "payment-service", "query": "connection pool timeout"}},
+          {"tool_name": "search_similar_incidents", "arguments": {"service": "payment-service", "query": "connection pool timeout"}}
+        ]
+      },
+      "tags": ["baseline", "payment-service", "pool-exhaustion"]
+    },
+    {
+      "sample_id": "eval_checkout_dns_misconfiguration",
+      "fixture_path": "data/incidents/checkout-service-dns-misconfiguration.json",
+      "retrieval_query": "checkout DNS resolver lookup timeout after configuration change",
+      "retrieval_top_k": 5,
+      "ground_truth": {
+        "affected_services": ["checkout-service"],
+        "failure_type": "dns_misconfiguration",
+        "root_cause_terms": ["DNS resolver", "unreachable", "test address", "lookup timeout"],
+        "relevant_evidence_ids": ["ev_checkout_change_dns_resolver", "ev_checkout_topology_orders"],
+        "relevant_document_ids": ["doc_runbook_checkout_dns"],
+        "expected_tools": [
+          {"tool_name": "search_logs", "arguments": {"service": "checkout-service", "query": "DNS lookup timeout"}},
+          {"tool_name": "query_metrics", "arguments": {"service": "checkout-service", "metric_name": "http.server.error_rate", "aggregation": "rate"}},
+          {"tool_name": "query_traces", "arguments": {"service": "checkout-service", "operation": "GET /checkout", "status": "timeout"}},
+          {"tool_name": "get_recent_changes", "arguments": {"service": "checkout-service", "change_type": "configuration"}},
+          {"tool_name": "get_service_topology", "arguments": {"service": "checkout-service", "depth": 1}},
+          {"tool_name": "search_runbooks", "arguments": {"service": "checkout-service", "query": "DNS resolver lookup timeout"}}
+        ]
+      },
+      "tags": ["challenge", "checkout-service", "dns"]
+    },
+    {
+      "sample_id": "eval_inventory_cache_regression",
+      "fixture_path": "data/incidents/inventory-service-cache-regression.json",
+      "retrieval_query": "inventory cache TTL zero cache miss database read amplification",
+      "retrieval_top_k": 5,
+      "ground_truth": {
+        "affected_services": ["inventory-service"],
+        "failure_type": "cache_configuration_regression",
+        "root_cause_terms": ["cache TTL", "300", "zero", "cache miss", "read amplification"],
+        "relevant_evidence_ids": ["ev_inventory_change_cache_ttl", "ev_inventory_topology_database"],
+        "relevant_document_ids": ["doc_runbook_inventory_cache"],
+        "expected_tools": [
+          {"tool_name": "search_logs", "arguments": {"service": "inventory-service", "query": "cache miss"}},
+          {"tool_name": "query_metrics", "arguments": {"service": "inventory-service", "metric_name": "process.cpu.utilization", "aggregation": "max"}},
+          {"tool_name": "query_traces", "arguments": {"service": "inventory-service", "operation": "GET /inventory", "status": "timeout"}},
+          {"tool_name": "get_recent_changes", "arguments": {"service": "inventory-service", "change_type": "configuration"}},
+          {"tool_name": "get_service_topology", "arguments": {"service": "inventory-service", "depth": 1}},
+          {"tool_name": "search_runbooks", "arguments": {"service": "inventory-service", "query": "cache TTL read amplification"}}
+        ]
+      },
+      "tags": ["challenge", "inventory-service", "cache"]
+    }
+  ]
+}

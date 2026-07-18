@@ -17,12 +17,13 @@ from incident_copilot.tools.providers.fixture import FixtureProvider
 def build_offline_investigation_graph(
     *,
     model: ModelProvider | None = None,
+    fixture_provider: FixtureProvider | None = None,
     clock: Callable[[], datetime] = utc_now,
     checkpointer: BaseCheckpointSaver[str] | None = None,
     require_human_review: bool = False,
 ) -> InvestigationGraph:
     """Build a no-key/no-network investigation graph for tests and demos."""
-    fixture = FixtureProvider.payment_service()
+    fixture = fixture_provider or FixtureProvider.payment_service()
     retriever, _ = build_fixture_retriever(clock=clock)
     registry = build_tool_registry(
         ProviderBundle(
