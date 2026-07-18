@@ -285,6 +285,12 @@
 
 ## 10. Phase 7：真实数据源和演示
 
+### 状态
+
+`completed`（2026-07-18）
+
+实现范围：Prometheus HTTP API 是当前唯一真实观测 Adapter；OpenTelemetry demo emitter 经 OTLP/HTTP、Collector 和 Prometheus 把 synthetic incident metrics 送入 LangGraph。日志、Trace、变更和拓扑仍为 Fixture。完整验收记录见 [`PROGRESS.md`](PROGRESS.md)，演示与面试材料见 [`DEMO_GUIDE.md`](DEMO_GUIDE.md) 和 [`INTERVIEW_GUIDE.md`](INTERVIEW_GUIDE.md)。
+
 ### 输入条件
 
 - Phase 6 有可比较基线；本机可运行容器或明确的替代环境。

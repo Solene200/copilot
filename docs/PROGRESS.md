@@ -586,3 +586,109 @@ uv run python -m scripts.evaluate_offline --output-dir artifacts/evaluation/manu
 ### 下一阶段建议
 
 完成本阶段后停止。只有用户明确要求 Phase 7 才开始真实 Prometheus/Loki/Tempo/OpenTelemetry Demo Adapter、Compose 演示与面试材料；进入前应冻结数据集 `1.0.0`，新增版本而不是修改旧标签。
+
+## Phase 7 — 真实数据源与作品集包装
+
+### 状态
+
+`completed`
+
+### 开始前基线
+
+- 完整重读 `AGENTS.md`、PRD、架构、Graph、数据模型、路线图和进度文档，并检查 Git diff。
+- 开始时工作区干净，`HEAD` 与 `origin/main` 均为 Phase 6 完成提交 `6cd3274`。
+- Phase 6 已提交离线 Evaluation 原始结果和汇总；Phase 7 没有修改数据集旧标签、调用付费 API 或实现自动修复。
+
+### 完成内容
+
+- 新增 `PrometheusMetricsProvider`，通过标准 Prometheus `/api/v1/query_range` 返回真实 metric Evidence。Adapter 对 base URL、领域指标/聚合 mapping、HTTP timeout、响应字节、序列数、样本数和有限数值设限，保留 source、服务、时间窗、请求 URI、locator 和 SHA-256 citation。
+- Prometheus 查询不接受任意 PromQL。当前 mapping 支持 `db.pool.utilization` 与 `http.server.error_rate`；HTTP 400/422、429、超时、不可用、超大/畸形响应统一转换为既有 Provider 错误类别。
+- 新增 `metrics_backend=fixture|prometheus` 运行配置。默认保持无网络 Fixture；Prometheus 模式只替换 metrics 端口，日志、Trace、变更、拓扑和 RAG 继续复用现有契约。真实 metrics 失败时 Graph 记录 coverage gap，不暗中伪造 Fixture metrics。
+- 新增混合 Provider Graph composition 与集成测试，验证 Prometheus citation 进入最终报告且 Fixture 分支仍可工作。
+- 新增 `Dockerfile`、`compose.yaml`、Collector/Prometheus 配置和可选 `demo` 依赖。demo emitter 使用 OpenTelemetry SDK 经 OTLP/HTTP 发送明确标记的 synthetic payment-service 指标；Prometheus 抓取 Collector exporter，Provider 再查询真实时序 API。
+- Compose 包含 PostgreSQL/pgvector、OpenTelemetry Collector、Prometheus、指标发生器、FastAPI 和一次性 demo；数据库宿主端口默认 `55432`，镜像使用固定版本，Prometheus 数据保留 2 小时。
+- 新增 `scripts/run_observability_demo.py`，等待真实 Prometheus 序列后运行 mixed-source Graph；若链路不可用则非零退出，不回退伪造。新增 fixture 时间平移辅助，使固定脱敏证据与当前演示窗口对齐且保持 Evidence/citation 哈希完整。
+- `scripts/run_api_demo.py` 新增 `--live-window`，完整演示创建、SSE、HITL 暂停、接受反馈、完成报告，并统计 Prometheus citation。
+- 重写 README 当前状态与快速开始；架构图只显示源码存在的真实 Prometheus Adapter、Fixture 端口、内存 Repository/RAG 和 PostgreSQL saver。新增 `docs/DEMO_GUIDE.md` 与 `docs/INTERVIEW_GUIDE.md`，覆盖项目背景、LangGraph 选择、Graph、RAG、State、循环终止、工具安全、Evaluation、生产缺口、简历描述和面试追问。
+
+### 分步 Git 记录
+
+- `4285c61`：受限 Prometheus metrics Provider 与成功/空结果/参数/超时/失败/畸形响应测试。
+- `c672d65`：metrics backend 配置、mixed-source Graph 装配和最终报告 citation 集成测试。
+- `9249b8c`：OpenTelemetry Collector/Prometheus/PostgreSQL Compose 栈、指标发生器、真实调查/API 演示和可选依赖。
+- `4bdf570`：README、当前实现架构图、演示指南和面试/简历材料。
+
+### 真实容器验收
+
+- 第一次冷构建使用不存在的 uv `0.11.29-python3.13-bookworm-slim` 标签而失败，未计为通过。根据 uv 官方镜像命名修正为 `0.11.29-python3.13-trixie-slim` 后，从头重跑成功。
+- `docker compose --profile demo up --build --abort-on-container-exit --exit-code-from demo demo`：PASS，退出码 0；真实路径为 OTLP/HTTP → Collector → Prometheus → Provider → LangGraph；probe 与 Graph 均返回 `ev_prom_*` Evidence，停止原因 `evidence_sufficient`，本次调用 7 个工具、报告有 13 个 citation。
+- `docker compose up -d --build api`：PASS；API、PostgreSQL、Prometheus 为 healthy，Collector 与 emitter 为 running。`/health` 返回 `ok`。
+- `uv run python scripts/run_api_demo.py --live-window`：PASS；一次调查经历 `waiting_review → accept → completed`，初始/恢复 run ID 不同，本次读取 47 个 SSE 事件、报告有 10 条 supporting evidence 和 1 条 Prometheus citation。
+- `docker compose --profile demo down -v --remove-orphans`：PASS；清理后该 Compose 项目无容器残留。未删除此前独立运行的本机 PostgreSQL 容器。
+
+上述工具数、citation 数和 SSE 事件数只是本机单次功能记录，不是性能、准确率、吞吐或扩展性指标。
+
+### 最终质量门禁
+
+| 命令/检查 | 真实结果 |
+| --- | --- |
+| `uv sync` | PASS：默认离线环境同步成功；移除可选 demo/postgres 包后基础功能仍可安装 |
+| `uv lock --check` | PASS：锁文件与项目元数据一致，解析 74 个包 |
+| `uv run ruff format --check .` | PASS：107 个 Python 文件已格式化 |
+| `uv run ruff check .` | PASS：All checks passed |
+| `uv run mypy src tests` | PASS：98 个 source files，0 issues |
+| `uv run --extra demo mypy scripts` | PASS：9 个 source files，0 issues |
+| Phase 7 pytest | PASS：29 passed，0 warning，0.95s |
+| `uv run pytest` | PASS：184 passed，0 warning，2.90s |
+| `uv run python scripts/render_graph.py --check docs/GRAPH_CURRENT.md` | PASS：文档 Mermaid 与当前编译 Graph 一致 |
+| `docker compose --profile demo config --quiet` | PASS：Compose 配置解析通过 |
+
+测试耗时是本机单次运行记录，不是 benchmark。
+
+### 新增或修改文件
+
+- Provider/装配：`src/incident_copilot/tools/providers/prometheus.py`、`tools/providers/__init__.py`、`tools/__init__.py`、`core/config.py`、`graph/bootstrap.py`、`graph/__init__.py`、`main.py`、`.env.example`。
+- 演示运行：`src/incident_copilot/demo.py`、`scripts/emit_demo_metrics.py`、`scripts/run_observability_demo.py`、`scripts/run_api_demo.py`、`Makefile`。
+- 容器：`Dockerfile`、`.dockerignore`、`compose.yaml`、`deploy/otel-collector-config.yaml`、`deploy/prometheus.yml`。
+- 测试：`tests/unit/tools/test_prometheus_provider.py`、`tests/unit/test_demo_scripts.py`、`tests/unit/core/test_config.py`、`tests/integration/test_prometheus_graph.py`。
+- 依赖/文档：`pyproject.toml`、`uv.lock`、`README.md`、`docs/ARCHITECTURE.md`、`docs/DEMO_GUIDE.md`、`docs/INTERVIEW_GUIDE.md`、`docs/ROADMAP.md`、`docs/PROGRESS.md`。
+
+### 已知问题
+
+- 真实接入只覆盖 Prometheus metrics。Loki、Tempo、真实变更/拓扑系统和官方 OpenTelemetry Demo 的业务指标语义 mapping 未实现；当前 emitter 是仓库内 synthetic demo signal。
+- 默认 Model 和 embedding 仍是 Fake；作品集演示证明控制流和证据链，不证明真实 LLM 诊断能力。
+- Investigation/SSE Repository 仍在内存，后台任务仍是进程内 `asyncio.Task`；PostgreSQL saver 不能代替持久化任务/事件仓储和分布式 worker。
+- pgvector Adapter 已实现契约但默认 Compose RAG 仍使用内存向量索引；没有 Alembic 管理的业务表、外部 Evidence Store 或真实知识增量同步。
+- Compose 凭据和 synthetic emitter 只适合 localhost 演示；没有鉴权、租户隔离、TLS、secret manager、数据库 HA、压力/恢复测试。
+- Evaluation 仍只有三个同仓样例，结果不能外推生产准确率。未执行新的性能 benchmark，也未声称 P95、吞吐或成本改善。
+
+### 手动验证
+
+完全离线：
+
+```text
+uv sync
+uv run pytest
+uv run python scripts/run_investigation.py
+```
+
+真实 metrics 证据链：
+
+```text
+docker compose --profile demo up --build --abort-on-container-exit --exit-code-from demo demo
+docker compose --profile demo down -v --remove-orphans
+```
+
+完整 API/HITL：
+
+```text
+docker compose up -d --build api
+uv run python scripts/run_api_demo.py --live-window
+docker compose --profile demo down -v --remove-orphans
+```
+
+详细预期与排错见 `docs/DEMO_GUIDE.md`。
+
+### 下一阶段建议
+
+路线图定义的 Phase 0–7 已全部完成，本次在 Phase 7 停止，不自动开启新阶段。如果后续单独立项生产化，优先级建议为：持久化 Investigation/Event Repository 与 Evidence Store；接入真实 LLM/embedding 并扩展人工审阅评估集；再增加 Loki/Tempo Adapter、鉴权/租户隔离和分布式 worker。任何新增工作都应保持默认 Fixture 回归和真实结果披露纪律。
