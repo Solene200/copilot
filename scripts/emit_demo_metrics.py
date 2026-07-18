@@ -63,8 +63,10 @@ def main() -> int:
     except KeyboardInterrupt:
         pass
     finally:
-        provider.force_flush(timeout_millis=5_000)
-        provider.shutdown()
+        try:
+            provider.force_flush(timeout_millis=5_000)
+        finally:
+            provider.shutdown()
     return 0
 
 

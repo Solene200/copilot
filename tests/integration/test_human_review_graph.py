@@ -71,8 +71,8 @@ async def test_additional_research_resumes_then_pauses_for_final_confirmation() 
             "comment": "Verify the database saturation signal.",
             "requested_queries": [
                 {
-                    "query": "database connection saturation",
-                    "source_types": [SourceType.METRIC.value],
+                    "query": "database saturation follow-up marker",
+                    "source_types": [SourceType.LOG.value],
                     "service": "payment-service",
                 }
             ],
@@ -84,6 +84,11 @@ async def test_additional_research_resumes_then_pauses_for_final_confirmation() 
     assert paused_again.next == ("human_review",)
     assert paused_again.values["research_round"] == 2
     assert paused_again.values["human_feedback"].action is ReviewAction.REQUEST_MORE_RESEARCH
+    refined_plan = paused_again.values["investigation_plan"]
+    assert len(refined_plan.steps) == 1
+    assert refined_plan.steps[0].source_type is SourceType.LOG
+    assert refined_plan.steps[0].purpose == "database saturation follow-up marker"
+    assert refined_plan.steps[0].arguments["query"] == "database saturation follow-up marker"
 
     accept: Command[Any] = Command(resume={"action": ReviewAction.ACCEPT.value})
     completed = await graph.ainvoke(accept, config)

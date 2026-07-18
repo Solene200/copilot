@@ -146,6 +146,7 @@ Provider 返回的 Evidence 包含 source、查询时间窗、服务、样本摘
 - LangGraph checkpoint 可使用内存或官方 PostgreSQL saver。
 - Investigation Service 把节点、工具、Evidence、预算和报告更新投影为有序 SSE 事件。
 - 高风险 remediation 在报告后进入 `interrupt()`，API 只接受严格 `HumanFeedback`。
+- `request_more_research` 的结构化查询会进入下一轮 `ModelContext`；离线 Fake Model 也会把该意图转换为真实、受限的工具步骤，而不是只做一次固定模板路由。
 - 重复恢复和无效反馈返回明确冲突/校验错误。
 
 生产缺口：Investigation Repository 和 SSE 历史仍在内存，后台任务是进程内 `asyncio.Task`。PostgreSQL checkpoint 能恢复 Graph 状态，但不能代替持久化任务仓储、事件总线或分布式 worker。

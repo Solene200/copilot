@@ -283,8 +283,15 @@ class PrometheusMetricsProvider:
                 provider_name=PROVIDER_NAME,
                 operation="query_metrics",
             )
+        if series.metric.get("service") != query.service:
+            raise ProviderMalformedResponseError(
+                "Prometheus returned a series outside the requested service",
+                provider_name=PROVIDER_NAME,
+                operation="query_metrics",
+            )
         points: list[dict[str, float | str]] = []
         numeric_values: list[float] = []
+        previous_timestamp: float | None = None
         for timestamp, raw_value in series.values:
             try:
                 value = float(raw_value)
@@ -300,6 +307,19 @@ class PrometheusMetricsProvider:
                     provider_name=PROVIDER_NAME,
                     operation="query_metrics",
                 )
+            if not query.start_time.timestamp() <= timestamp <= query.end_time.timestamp():
+                raise ProviderMalformedResponseError(
+                    "Prometheus returned a sample outside the requested time range",
+                    provider_name=PROVIDER_NAME,
+                    operation="query_metrics",
+                )
+            if previous_timestamp is not None and timestamp <= previous_timestamp:
+                raise ProviderMalformedResponseError(
+                    "Prometheus returned samples outside strict timestamp order",
+                    provider_name=PROVIDER_NAME,
+                    operation="query_metrics",
+                )
+            previous_timestamp = timestamp
             points.append(
                 {
                     "timestamp": datetime.fromtimestamp(timestamp, tz=UTC).isoformat(),

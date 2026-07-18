@@ -172,6 +172,8 @@ class FakeModelProvider:
                     70,
                 ),
             )
+        elif follow_up_specs := self._follow_up_specs(context):
+            specs = follow_up_specs
         else:
             specs = (
                 (
@@ -236,6 +238,101 @@ class FakeModelProvider:
                 "Collect symptoms, causal changes, dependency context, and operational knowledge."
             ),
         )
+
+    @staticmethod
+    def _follow_up_specs(
+        context: ModelContext,
+    ) -> tuple[tuple[str, SourceType, str, dict[str, object], int], ...]:
+        """Turn bounded provider-neutral follow-up intent into offline demo steps."""
+        feedback = context.human_feedback
+        queries = (
+            feedback.requested_queries
+            if feedback is not None and feedback.requested_queries
+            else context.next_investigation_queries
+        )
+        specs: list[tuple[str, SourceType, str, dict[str, object], int]] = []
+        for query in queries:
+            service = query.service or context.service
+            for source_type in query.source_types:
+                spec: tuple[str, SourceType, str, dict[str, object], int]
+                common_range = {
+                    "service": service,
+                    "start_time": context.start_time.isoformat(),
+                    "end_time": context.end_time.isoformat(),
+                }
+                if source_type is SourceType.LOG:
+                    spec = (
+                        "search_logs",
+                        source_type,
+                        query.query,
+                        {**common_range, "query": query.query, "limit": 10},
+                        100,
+                    )
+                elif source_type is SourceType.METRIC:
+                    normalized = query.query.casefold()
+                    pool_metric = any(
+                        term in normalized for term in ("database", "connection", "pool")
+                    )
+                    spec = (
+                        "query_metrics",
+                        source_type,
+                        query.query,
+                        {
+                            **common_range,
+                            "metric_name": (
+                                "db.pool.utilization" if pool_metric else "http.server.error_rate"
+                            ),
+                            "aggregation": "max" if pool_metric else "rate",
+                            "limit": 10,
+                        },
+                        100,
+                    )
+                elif source_type is SourceType.TRACE:
+                    spec = (
+                        "query_traces",
+                        source_type,
+                        query.query,
+                        {**common_range, "status": "timeout", "limit": 10},
+                        95,
+                    )
+                elif source_type is SourceType.CHANGE:
+                    spec = (
+                        "get_recent_changes",
+                        source_type,
+                        query.query,
+                        {
+                            **common_range,
+                            "start_time": (context.start_time - timedelta(minutes=30)).isoformat(),
+                            "change_type": "configuration",
+                            "limit": 10,
+                        },
+                        95,
+                    )
+                elif source_type is SourceType.TOPOLOGY:
+                    spec = (
+                        "get_service_topology",
+                        source_type,
+                        query.query,
+                        {
+                            "service": service,
+                            "at_time": context.start_time.isoformat(),
+                            "depth": 1,
+                            "limit": 10,
+                        },
+                        80,
+                    )
+                else:
+                    spec = (
+                        "search_runbooks",
+                        source_type,
+                        query.query,
+                        {"service": service, "query": query.query, "limit": 5},
+                        75,
+                    )
+                specs.append(spec)
+                if len(specs) == 20:
+                    return tuple(specs)
+        return tuple(specs)
 
     def _hypotheses(self, context: ModelContext) -> HypothesesOutput:
         relevant: list[dict[str, JsonValue]] = []

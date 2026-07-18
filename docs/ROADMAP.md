@@ -19,7 +19,7 @@
 | 4 | LangGraph 调查工作流 | completed | 完整有界调查循环与报告 |
 | 5 | API、Streaming、Checkpoint、HITL | completed | 可创建、观察、恢复和审核调查 |
 | 6 | Evaluation 和 Agent 可观测性 | completed | 可复现质量/成本/时延报告 |
-| 7 | 真实数据源和演示 | not_started | 真实 Adapter + Docker 演示 + 面试材料 |
+| 7 | 真实数据源和演示 | completed | 真实 Adapter + Docker 演示 + 面试材料 |
 
 ## 3. Phase 0：需求、架构和项目规范
 
@@ -290,6 +290,8 @@
 `completed`（2026-07-18）
 
 实现范围：Prometheus HTTP API 是当前唯一真实观测 Adapter；OpenTelemetry demo emitter 经 OTLP/HTTP、Collector 和 Prometheus 把 synthetic incident metrics 送入 LangGraph。日志、Trace、变更和拓扑仍为 Fixture。完整验收记录见 [`PROGRESS.md`](PROGRESS.md)，演示与面试材料见 [`DEMO_GUIDE.md`](DEMO_GUIDE.md) 和 [`INTERVIEW_GUIDE.md`](INTERVIEW_GUIDE.md)。
+
+2026-07-18 对 Phase 5–7 完成独立严格审查并修复全部已确认 P1；当前全量质量门禁为 194 passed，Graph 文档与编译图一致，Compose 配置可解析且真实冷启动复验通过。审查没有实现新的后续 Phase，详细问题、修复和真实命令结果见 [`PROGRESS.md`](PROGRESS.md)。
 
 ### 输入条件
 

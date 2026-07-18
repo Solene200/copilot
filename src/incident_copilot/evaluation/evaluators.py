@@ -94,16 +94,25 @@ def retrieval_metrics(
 def tool_argument_metrics(
     expected_calls: Sequence[ExpectedToolCall], actual_calls: Sequence[ActualToolCall]
 ) -> ToolArgumentMetrics:
-    """Compare only labeled argument fields, preserving strict JSON value equality."""
-    actual_by_name = {call.tool_name: call.arguments for call in actual_calls}
+    """Compare labeled fields against the best same-tool execution in any round."""
+    actual_by_name: dict[str, list[dict[str, JsonValue]]] = {}
+    for call in actual_calls:
+        actual_by_name.setdefault(call.tool_name, []).append(call.arguments)
     expected_count = 0
     matched_count = 0
     for expected_call in expected_calls:
-        actual_arguments = actual_by_name.get(expected_call.tool_name, {})
-        for field, expected_value in expected_call.arguments.items():
-            expected_count += 1
-            if actual_arguments.get(field) == expected_value:
-                matched_count += 1
+        expected_count += len(expected_call.arguments)
+        candidates = actual_by_name.get(expected_call.tool_name, ())
+        matched_count += max(
+            (
+                sum(
+                    actual_arguments.get(field) == expected_value
+                    for field, expected_value in expected_call.arguments.items()
+                )
+                for actual_arguments in candidates
+            ),
+            default=0,
+        )
     score = matched_count / expected_count if expected_count else 1.0
     return ToolArgumentMetrics(
         expected_field_count=expected_count,

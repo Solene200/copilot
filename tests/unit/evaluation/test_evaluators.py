@@ -148,6 +148,34 @@ def test_tool_argument_metrics_compare_only_labeled_fields() -> None:
     assert result.score == 0.5
 
 
+def test_tool_argument_metrics_are_stable_across_multiple_research_rounds() -> None:
+    expected = (
+        ExpectedToolCall(
+            tool_name="search_logs",
+            arguments={"service": "payment-service", "query": "connection acquisition"},
+        ),
+    )
+    actual = (
+        ActualToolCall(
+            tool_name="search_logs",
+            arguments={"service": "payment-service", "query": "timed out"},
+            status="completed",
+            evidence_ids=(),
+        ),
+        ActualToolCall(
+            tool_name="search_logs",
+            arguments={"service": "payment-service", "query": "connection acquisition"},
+            status="completed",
+            evidence_ids=(),
+        ),
+    )
+
+    result = tool_argument_metrics(expected, actual)
+
+    assert result.matched_field_count == 2
+    assert result.score == 1.0
+
+
 def test_failure_type_and_root_cause_terms_are_transparent_lexical_checks() -> None:
     text = "A DNS resolver change caused a name lookup timeout."
 

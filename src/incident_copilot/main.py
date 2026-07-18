@@ -55,14 +55,21 @@ def create_app(
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         if investigation_service is not None:
             application.state.investigation_service = investigation_service
-            yield
+            try:
+                yield
+            finally:
+                await investigation_service.aclose()
             return
         async with open_checkpointer(resolved_settings) as checkpointer:
-            application.state.investigation_service = InvestigationService(
+            service = InvestigationService(
                 graph=_build_runtime_graph(resolved_settings, checkpointer=checkpointer),
                 repository=InMemoryInvestigationRepository(),
             )
-            yield
+            application.state.investigation_service = service
+            try:
+                yield
+            finally:
+                await service.aclose()
 
     app = FastAPI(
         title=resolved_settings.app_name,

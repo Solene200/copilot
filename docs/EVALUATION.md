@@ -24,7 +24,7 @@ Runner 会捕获单个样例异常并写入原始结果，失败样例仍计入 
 2. checkout-service DNS resolver 配置错误。
 3. inventory-service cache TTL 被设为零。
 
-每个样例引用独立 Fixture，并标注受影响服务、故障类型、根因关键词、相关 Evidence/知识文档、理想工具和关键参数。Ground truth 只在 Graph 完成后交给 evaluator；Runner 传给 Graph 的只有 `IncidentContext`、Fixture Provider 和固定预算。
+每个样例引用独立 Fixture，并标注受影响服务、故障类型、根因关键词、相关 Evidence/知识文档、理想工具和关键参数。Ground truth 只在 Graph 完成后交给 evaluator；检索过滤使用 Fixture 中的 `IncidentContext.services`，而不是标签服务。Runner 传给 Graph 的只有 `IncidentContext`、Fixture Provider 和固定预算。
 
 这只是小型 fixture 回归集，不是独立同分布的生产数据集，也不能用来证明模型泛化能力。
 
@@ -37,7 +37,7 @@ Runner 会捕获单个样例异常并写入原始结果，失败样例仍计入 
 | Recall@K | 前 K 个去重 document ID 覆盖相关文档的比例；无相关标签时定义为 1 |
 | MRR | 前 K 个结果中第一个相关 document ID 的倒数排名；未命中为 0 |
 | 工具选择 | 期望与实际工具名集合的 F1 |
-| 工具参数 | 仅比较 ground truth 明确标注的字段；运行时额外预算字段不受罚 |
+| 工具参数 | 仅比较 ground truth 明确标注的字段；多轮出现同名工具时取字段匹配度最高的真实调用，运行时额外预算字段不受罚 |
 | Evidence relevance | 报告 supporting Evidence ID 与相关 Evidence ID 集合的 F1 |
 | 引用正确性 | 每个 EvidenceRef 的 citation ID、URI、locator、content hash 是否与报告 Citation 完全一致 |
 | 根因准确率 | 报告覆盖至少 75% 版本化根因关键词记为正确；同时保留连续 term recall |

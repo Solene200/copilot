@@ -3,13 +3,11 @@
 import argparse
 import asyncio
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
-from incident_copilot.demo import shift_fixture_to_now
-from incident_copilot.domain.evidence import Evidence
+from incident_copilot.demo import shift_fixture_to_now, wait_for_metric
 from incident_copilot.graph import build_mixed_investigation_graph, create_initial_state
 from incident_copilot.tools.providers import FixtureProvider, PrometheusMetricsProvider
-from incident_copilot.tools.schemas import QueryContext, QueryMetricsInput
 
 
 def parse_args() -> argparse.Namespace:
@@ -17,43 +15,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prometheus-url", default="http://127.0.0.1:9090")
     parser.add_argument("--wait-seconds", type=float, default=60)
     return parser.parse_args()
-
-
-async def wait_for_metric(
-    provider: PrometheusMetricsProvider,
-    *,
-    timeout_seconds: float,
-) -> tuple[Evidence, ...]:
-    """Poll a bounded real endpoint until the Collector has exported one series."""
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout_seconds
-    while loop.time() < deadline:
-        now = datetime.now(UTC)
-        query = QueryMetricsInput(
-            service="payment-service",
-            start_time=now - timedelta(minutes=20),
-            end_time=now,
-            metric_name="db.pool.utilization",
-            aggregation="max",
-            limit=5,
-        )
-        context = QueryContext(
-            correlation_id="phase7-observability-demo",
-            deadline=now + timedelta(seconds=5),
-            remaining_tool_calls=1,
-        )
-        try:
-            evidence = await provider.query(query, context)
-        except Exception as exc:
-            last_error: Exception | None = exc
-        else:
-            if evidence:
-                return evidence
-            last_error = None
-        await asyncio.sleep(1)
-    if last_error is not None:
-        raise TimeoutError("Prometheus metric did not become available") from last_error
-    raise TimeoutError("Prometheus metric did not become available")
 
 
 async def run() -> int:

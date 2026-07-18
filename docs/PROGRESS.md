@@ -4,11 +4,24 @@
 
 | 项目 | 值 |
 | --- | --- |
-| 当前已完成阶段 | Phase 6 |
-| 下一阶段 | Phase 7（等待用户明确确认） |
+| 当前已完成阶段 | Phase 7 |
+| 下一阶段 | 无；等待用户定义后续范围 |
 | 最近更新 | 2026-07-18 |
 | 仓库初始状态 | 空目录，无 `.git` 元数据 |
 | 当前运行环境 | Windows / PowerShell；Python 3.13 可用 |
+
+## Phase 5–7 独立严格审查（2026-07-18）
+
+- P0：未发现。
+- 已修复 P1：人工审核追加查询此前只写入 State、未进入规划上下文；现由 `ModelContext` 显式携带 judge 的下一步查询和人工反馈，离线 Fake Model 会生成受限真实步骤，集成测试断言实际参数。
+- 已修复 P1：后台调查任务此前没有应用关闭回收，初始化异常可能悬挂，Graph 无 `final_report` 也会被标记完成；现统一取消/await 任务、观察后台异常，并把缺报告或初始化失败转换为明确 `failed` 终态。
+- 已修复 P1：Evaluation 检索过滤此前读取 ground truth 服务标签，多轮同名工具参数又被最后一次调用覆盖，且早期轮次无法从最新 plan 反查；现过滤只来自 `IncidentContext`，`StepResult` 保留有界实际参数，参数 evaluator 在所有真实同名调用中选择最佳字段匹配，并有标签污染与多轮 Runner 回归测试。
+- 已修复 P1：Prometheus 返回序列此前未校验响应中的服务标签、请求时间窗和时间顺序；现把不匹配响应作为 malformed response 拒绝。Demo emitter 关闭路径确保即使 flush 失败也调用 shutdown。
+- 已修复 P1：严格审查第一次真实 Compose 冷启动暴露 Prometheus 健康与首批稳定 scrape 之间的竞态，demo 虽探测到一次序列但 Graph 随后降级为无 metrics。readiness 现要求间隔两个 scrape 周期的连续成功，并有单测；从空容器/空卷重新构建复跑后退出码 0，Graph 返回真实 `ev_prom_*`、`evidence_sufficient`、7 次工具调用和 13 条 citation。
+- 已修复文档状态：路线图总览与本页顶部统一为 Phase 7 已完成；未创建或实现后续 Phase。
+- 定向回归：45 passed；后台关闭补充测试单独为 8 passed。
+- 当前全量门禁：`uv lock --check` 解析 74 个包；Ruff format/check 通过；`mypy src tests` 通过 98 个 source files；demo scripts mypy 通过 9 个 source files；`pytest` 为 194 passed、0 failed、0 warning；当前 Graph Mermaid 一致性检查通过。
+- 当前离线 Evaluation 审查运行：3/3 completed、0 failed；结果写入系统临时目录，未覆盖历史 Phase 6 基线。Compose 配置解析退出码为 0；真实冷启动修复后退出码也为 0。最终执行 `down -v --remove-orphans`，只删除本次审查创建的容器、网络和 Prometheus 演示卷，确认项目无容器或卷残留。
 
 ## Phase 0 — 需求、架构和项目规范
 
@@ -607,7 +620,7 @@ uv run python -m scripts.evaluate_offline --output-dir artifacts/evaluation/manu
 - 新增混合 Provider Graph composition 与集成测试，验证 Prometheus citation 进入最终报告且 Fixture 分支仍可工作。
 - 新增 `Dockerfile`、`compose.yaml`、Collector/Prometheus 配置和可选 `demo` 依赖。demo emitter 使用 OpenTelemetry SDK 经 OTLP/HTTP 发送明确标记的 synthetic payment-service 指标；Prometheus 抓取 Collector exporter，Provider 再查询真实时序 API。
 - Compose 包含 PostgreSQL/pgvector、OpenTelemetry Collector、Prometheus、指标发生器、FastAPI 和一次性 demo；数据库宿主端口默认 `55432`，镜像使用固定版本，Prometheus 数据保留 2 小时。
-- 新增 `scripts/run_observability_demo.py`，等待真实 Prometheus 序列后运行 mixed-source Graph；若链路不可用则非零退出，不回退伪造。新增 fixture 时间平移辅助，使固定脱敏证据与当前演示窗口对齐且保持 Evidence/citation 哈希完整。
+- 新增 `scripts/run_observability_demo.py`，等待真实 Prometheus 序列后运行 mixed-source Graph；严格审查后 readiness 要求两个 scrape 周期连续成功，避免健康检查与首批稳定指标之间的冷启动竞态。若链路不可用则非零退出，不回退伪造。新增 fixture 时间平移辅助，使固定脱敏证据与当前演示窗口对齐且保持 Evidence/citation 哈希完整。
 - `scripts/run_api_demo.py` 新增 `--live-window`，完整演示创建、SSE、HITL 暂停、接受反馈、完成报告，并统计 Prometheus citation。
 - 重写 README 当前状态与快速开始；架构图只显示源码存在的真实 Prometheus Adapter、Fixture 端口、内存 Repository/RAG 和 PostgreSQL saver。新增 `docs/DEMO_GUIDE.md` 与 `docs/INTERVIEW_GUIDE.md`，覆盖项目背景、LangGraph 选择、Graph、RAG、State、循环终止、工具安全、Evaluation、生产缺口、简历描述和面试追问。
 

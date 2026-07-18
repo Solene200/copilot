@@ -1,9 +1,56 @@
 """Deterministic helpers used only by the portfolio demonstration."""
 
-from datetime import datetime
+import asyncio
+from datetime import UTC, datetime, timedelta
 
 from incident_copilot.domain.evidence import Evidence
 from incident_copilot.fixtures.schemas import IncidentFixture
+from incident_copilot.tools.providers import PrometheusMetricsProvider
+from incident_copilot.tools.schemas import QueryContext, QueryMetricsInput
+
+
+async def wait_for_metric(
+    provider: PrometheusMetricsProvider,
+    *,
+    timeout_seconds: float,
+) -> tuple[Evidence, ...]:
+    """Require two successful scrape observations before the demo graph starts."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_seconds
+    last_error: Exception | None = None
+    consecutive_successes = 0
+    while loop.time() < deadline:
+        now = datetime.now(UTC)
+        query = QueryMetricsInput(
+            service="payment-service",
+            start_time=now - timedelta(minutes=20),
+            end_time=now,
+            metric_name="db.pool.utilization",
+            aggregation="max",
+            limit=5,
+        )
+        context = QueryContext(
+            correlation_id="phase7-observability-demo",
+            deadline=now + timedelta(seconds=5),
+            remaining_tool_calls=1,
+        )
+        try:
+            evidence = await provider.query(query, context)
+        except Exception as exc:
+            last_error = exc
+            consecutive_successes = 0
+        else:
+            if evidence:
+                consecutive_successes += 1
+                if consecutive_successes >= 2:
+                    return evidence
+            else:
+                consecutive_successes = 0
+            last_error = None
+        await asyncio.sleep(2)
+    if last_error is not None:
+        raise TimeoutError("Prometheus metric did not become available") from last_error
+    raise TimeoutError("Prometheus metric did not become available")
 
 
 def shift_fixture_to_now(fixture: IncidentFixture, reference_end: datetime) -> IncidentFixture:

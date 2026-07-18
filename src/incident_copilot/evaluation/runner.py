@@ -115,7 +115,7 @@ class OfflineEvaluationRunner:
             SearchQuery(
                 query=sample.retrieval_query,
                 top_k=sample.retrieval_top_k,
-                metadata_filter=MetadataFilter(services=sample.ground_truth.affected_services),
+                metadata_filter=MetadataFilter(services=incident.services),
             )
         )
         ranked_document_ids = tuple(hit.chunk.document_id for hit in retrieval.hits)
@@ -189,16 +189,9 @@ class OfflineEvaluationRunner:
 
     @staticmethod
     def _actual_tool_calls(state: InvestigationState) -> tuple[ActualToolCall, ...]:
-        plan = state.get("investigation_plan")
-        plan_steps = {step.step_id: step for step in plan.steps} if plan is not None else {}
         calls: list[ActualToolCall] = []
         for result in state.get("completed_steps", ()):
-            step = plan_steps.get(result.step_id)
-            arguments = (
-                {key: json_argument_value(value) for key, value in step.arguments.items()}
-                if step is not None
-                else {}
-            )
+            arguments = {key: json_argument_value(value) for key, value in result.arguments.items()}
             calls.append(
                 ActualToolCall(
                     tool_name=result.tool_name,

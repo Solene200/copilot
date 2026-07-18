@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import uuid4
@@ -55,6 +55,16 @@ class InvestigationService:
     def repository(self) -> InvestigationRepository:
         """Expose the repository port to the SSE transport adapter."""
         return self._repository
+
+    async def aclose(self) -> None:
+        """Cancel and observe all process-local executions before dependencies close."""
+        tasks = tuple(self._tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._tasks.clear()
+        self._locks.clear()
 
     async def create(
         self,
@@ -161,13 +171,27 @@ class InvestigationService:
                 raise TimeoutError("investigation did not reach a quiescent state")
             await asyncio.sleep(0.01)
 
-    def _start_task(self, investigation_id: str, coroutine: Any) -> None:
+    def _start_task(
+        self,
+        investigation_id: str,
+        coroutine: Coroutine[Any, Any, None],
+    ) -> None:
         task = asyncio.create_task(coroutine, name=f"investigation:{investigation_id}")
         self._tasks[investigation_id] = task
 
         def remove(completed: asyncio.Task[None]) -> None:
             if self._tasks.get(investigation_id) is completed:
                 self._tasks.pop(investigation_id, None)
+            try:
+                error = completed.exception()
+            except asyncio.CancelledError:
+                return
+            if error is not None:
+                logger.error(
+                    "Investigation background task failed",
+                    exc_info=(type(error), error, error.__traceback__),
+                    extra={"investigation_id": investigation_id},
+                )
 
         task.add_done_callback(remove)
 
@@ -235,21 +259,33 @@ class InvestigationService:
         return stored
 
     async def _run_initial(self, investigation_id: str) -> None:
-        record = await self._repository.get(investigation_id)
-        running = record.model_copy(
-            update={
-                "status": InvestigationStatus.RUNNING,
-                "updated_at": self._clock(),
-                "version": record.version + 1,
-            }
-        )
-        running = await self._repository.update(running, expected_version=record.version)
-        await self._append_event(
-            running,
-            EventType.INVESTIGATION_STARTED,
-            {"mode": "initial"},
-        )
-        initial = create_initial_state(running.incident, options=running.options, clock=self._clock)
+        try:
+            record = await self._repository.get(investigation_id)
+            running = record.model_copy(
+                update={
+                    "status": InvestigationStatus.RUNNING,
+                    "updated_at": self._clock(),
+                    "version": record.version + 1,
+                }
+            )
+            running = await self._repository.update(running, expected_version=record.version)
+            await self._append_event(
+                running,
+                EventType.INVESTIGATION_STARTED,
+                {"mode": "initial"},
+            )
+            initial = create_initial_state(
+                running.incident, options=running.options, clock=self._clock
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Investigation initialization failed",
+                extra={"investigation_id": investigation_id},
+            )
+            await self._mark_failed(investigation_id)
+            return
         await self._execute(investigation_id, initial)
 
     async def _execute(
@@ -257,9 +293,9 @@ class InvestigationService:
         investigation_id: str,
         graph_input: InvestigationState | Command[Any],
     ) -> None:
-        record = await self._repository.get(investigation_id)
-        config = self._config(record.thread_id)
         try:
+            record = await self._repository.get(investigation_id)
+            config = self._config(record.thread_id)
             async for update in self._graph.astream(
                 graph_input,
                 config,
@@ -293,6 +329,8 @@ class InvestigationService:
                     cast(dict[str, JsonValue], review_request.model_dump(mode="json")),
                 )
                 return
+            if report is None:
+                raise RuntimeError("graph completed without a final report")
             completed = latest.model_copy(
                 update={
                     "status": InvestigationStatus.COMPLETED,
@@ -306,28 +344,33 @@ class InvestigationService:
             await self._append_event(
                 completed,
                 EventType.REPORT_COMPLETED,
-                {"report_id": report.report_id if report is not None else None},
+                {"report_id": report.report_id},
             )
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.exception(
                 "Investigation execution failed",
-                extra={"investigation_id": investigation_id, "thread_id": record.thread_id},
+                extra={"investigation_id": investigation_id},
             )
-            latest = await self._repository.get(investigation_id)
-            failed = latest.model_copy(
-                update={
-                    "status": InvestigationStatus.FAILED,
-                    "error_message": "Investigation execution failed",
-                    "updated_at": self._clock(),
-                    "version": latest.version + 1,
-                }
-            )
-            failed = await self._repository.update(failed, expected_version=latest.version)
-            await self._append_event(
-                failed,
-                EventType.INVESTIGATION_FAILED,
-                {"message": "Investigation execution failed"},
-            )
+            await self._mark_failed(investigation_id)
+
+    async def _mark_failed(self, investigation_id: str) -> None:
+        latest = await self._repository.get(investigation_id)
+        failed = latest.model_copy(
+            update={
+                "status": InvestigationStatus.FAILED,
+                "error_message": "Investigation execution failed",
+                "updated_at": self._clock(),
+                "version": latest.version + 1,
+            }
+        )
+        failed = await self._repository.update(failed, expected_version=latest.version)
+        await self._append_event(
+            failed,
+            EventType.INVESTIGATION_FAILED,
+            {"message": "Investigation execution failed"},
+        )
 
     async def _project_graph_update(
         self,

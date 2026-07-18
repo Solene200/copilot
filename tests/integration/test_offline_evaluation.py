@@ -2,12 +2,17 @@
 
 import json
 import socket
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from incident_copilot.evaluation import OfflineEvaluationRunner, load_evaluation_dataset
 from incident_copilot.evaluation.schemas import EvaluationDataset
+from incident_copilot.graph.schemas import StepResult, StepStatus
+from incident_copilot.graph.state import InvestigationState
+from incident_copilot.rag.bootstrap import build_fixture_retriever
+from incident_copilot.rag.schemas import RetrievalResult, SearchQuery
 
 
 @pytest.mark.asyncio
@@ -66,3 +71,61 @@ async def test_failed_sample_is_retained_in_raw_results_and_denominator(tmp_path
     assert raw["error"].startswith("FileNotFoundError:")
     assert summary.metrics.root_cause_accuracy is None
     assert summary.metrics.total_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_retrieval_filter_comes_from_incident_not_ground_truth() -> None:
+    dataset = load_evaluation_dataset()
+    original = dataset.samples[0]
+    poisoned = original.model_copy(
+        update={
+            "ground_truth": original.ground_truth.model_copy(
+                update={"affected_services": ("checkout-service",)}
+            )
+        }
+    )
+    retriever, _ = build_fixture_retriever()
+
+    class RecordingRetriever:
+        def __init__(self) -> None:
+            self.query: SearchQuery | None = None
+
+        def search(self, query: SearchQuery) -> RetrievalResult:
+            self.query = query
+            return retriever.search(query)
+
+    recording = RecordingRetriever()
+
+    await OfflineEvaluationRunner()._run_sample(
+        poisoned,
+        retriever=recording,
+        run_id="evalrun_test_ground_truth_isolation",
+    )
+
+    assert recording.query is not None
+    assert recording.query.metadata_filter.services == ("payment-service",)
+
+
+def test_runner_keeps_arguments_from_steps_outside_the_latest_plan() -> None:
+    occurred_at = datetime(2026, 7, 18, 8, 0, tzinfo=UTC)
+    state: InvestigationState = {
+        "completed_steps": (
+            StepResult(
+                step_id="step_r1_old",
+                query_key="a" * 64,
+                tool_name="search_logs",
+                arguments={"service": "payment-service", "query": "first round"},
+                status=StepStatus.COMPLETED,
+                attempts=1,
+                started_at=occurred_at,
+                completed_at=occurred_at,
+            ),
+        )
+    }
+
+    calls = OfflineEvaluationRunner._actual_tool_calls(state)
+
+    assert calls[0].arguments == {
+        "service": "payment-service",
+        "query": "first round",
+    }

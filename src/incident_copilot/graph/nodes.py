@@ -162,6 +162,7 @@ class InvestigationNodes:
                 step_id=step.step_id,
                 query_key=step.query_key,
                 tool_name=step.tool_name,
+                arguments=step.arguments,
                 status=StepStatus.FAILED,
                 error_id=error.error_id,
                 attempts=attempts,
@@ -181,6 +182,7 @@ class InvestigationNodes:
             step_id=step.step_id,
             query_key=step.query_key,
             tool_name=step.tool_name,
+            arguments=step.arguments,
             status=StepStatus.COMPLETED,
             evidence_ids=tuple(item.evidence_id for item in refs),
             attempts=result.attempts,
@@ -633,6 +635,8 @@ class InvestigationNodes:
             research_round=round_number or state["research_round"],
             evidence_summaries=evidence_summaries,
             hypotheses=state.get("hypotheses", ()),
+            next_investigation_queries=state.get("next_investigation_queries", ()),
+            human_feedback=state.get("human_feedback"),
             error_count=len(state.get("errors", ())),
         )
 

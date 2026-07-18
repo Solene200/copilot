@@ -108,7 +108,7 @@ Graph State 中的轻量投影：`evidence_id`、`source_type`、`title`、`summ
 | `depends_on` | 仅引用同计划 step ID；MVP 尽量扁平 |
 | `status` | pending/running/completed/failed/skipped |
 
-`StepResult` 保存 step ID、状态、Evidence ID、错误 ID、开始/结束时间和重试次数，不复制证据内容。
+`StepResult` 保存 step ID、状态、经 Schema 限制的实际工具参数、Evidence ID、错误 ID、开始/结束时间和重试次数，不复制证据内容。保留实际参数是为了让多轮 Evaluation 不依赖只代表最新一轮的 `investigation_plan` 反查历史调用。
 
 ## 6. Hypothesis
 

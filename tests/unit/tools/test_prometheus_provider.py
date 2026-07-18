@@ -193,6 +193,27 @@ async def test_malformed_responses_are_rejected(body: bytes) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"status":"success","data":{"resultType":"matrix","result":[{"metric":{"service":"other-service"},"values":[[1784341200,"0.9"]]}]}}',
+        b'{"status":"success","data":{"resultType":"matrix","result":[{"metric":{"service":"payment-service"},"values":[[1784330000,"0.9"]]}]}}',
+        b'{"status":"success","data":{"resultType":"matrix","result":[{"metric":{"service":"payment-service"},"values":[[1784341230,"0.9"],[1784341200,"0.8"]]}]}}',
+    ],
+)
+async def test_untrusted_series_must_match_requested_service_and_time_window(
+    body: bytes,
+) -> None:
+    provider = PrometheusMetricsProvider(
+        "http://prometheus:9090",
+        transport=FakeTransport(HttpResponse(200, body)),
+    )
+
+    with pytest.raises(ProviderMalformedResponseError):
+        await provider.query(query(), context())
+
+
+@pytest.mark.asyncio
 async def test_expired_context_does_not_call_transport() -> None:
     transport = FakeTransport()
     provider = PrometheusMetricsProvider("http://prometheus:9090", transport=transport)

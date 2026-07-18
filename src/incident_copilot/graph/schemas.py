@@ -16,6 +16,7 @@ from incident_copilot.domain.common import (
     unique_evidence_ids,
 )
 from incident_copilot.domain.hypothesis import Hypothesis, VerificationQuery
+from incident_copilot.domain.review import HumanFeedback
 
 
 def stable_query_key(tool_name: str, arguments: Mapping[str, object]) -> str:
@@ -126,6 +127,7 @@ class StepResult(DomainModel):
     step_id: str = Field(pattern=r"^step_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     query_key: str = Field(pattern=r"^[a-f0-9]{64}$")
     tool_name: str = Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")
+    arguments: dict[str, JsonValue] = Field(default_factory=dict, max_length=20)
     status: StepStatus
     evidence_ids: tuple[str, ...] = Field(default_factory=tuple, max_length=50)
     error_id: str | None = Field(default=None, pattern=r"^err_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
@@ -224,6 +226,10 @@ class ModelContext(DomainModel):
         default_factory=tuple, max_length=100
     )
     hypotheses: tuple[Hypothesis, ...] = Field(default_factory=tuple, max_length=10)
+    next_investigation_queries: tuple[VerificationQuery, ...] = Field(
+        default_factory=tuple, max_length=10
+    )
+    human_feedback: HumanFeedback | None = None
     error_count: int = Field(default=0, ge=0)
 
 
