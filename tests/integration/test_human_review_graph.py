@@ -88,3 +88,32 @@ async def test_additional_research_resumes_then_pauses_for_final_confirmation() 
     accept: Command[Any] = Command(resume={"action": ReviewAction.ACCEPT.value})
     completed = await graph.ainvoke(accept, config)
     assert completed["review_completed"] is True
+
+
+@pytest.mark.asyncio
+async def test_recompiled_graph_resumes_the_same_checkpoint_thread() -> None:
+    saver = InMemorySaver()
+    config: RunnableConfig = {"configurable": {"thread_id": "thread_recompiled_graph"}}
+    first_graph = build_offline_investigation_graph(
+        clock=fixed_clock,
+        checkpointer=saver,
+        require_human_review=True,
+    )
+    await first_graph.ainvoke(
+        create_initial_state(
+            FixtureProvider.payment_service().fixture.incident,
+            clock=fixed_clock,
+        ),
+        config,
+    )
+
+    rebuilt_graph = build_offline_investigation_graph(
+        clock=fixed_clock,
+        checkpointer=saver,
+        require_human_review=True,
+    )
+    accept: Command[Any] = Command(resume={"action": ReviewAction.ACCEPT.value})
+    completed = await rebuilt_graph.ainvoke(accept, config)
+
+    assert completed["review_completed"] is True
+    assert (await rebuilt_graph.aget_state(config)).next == ()

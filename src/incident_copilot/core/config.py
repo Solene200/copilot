@@ -28,6 +28,13 @@ class LogLevel(StrEnum):
     CRITICAL = "CRITICAL"
 
 
+class CheckpointBackend(StrEnum):
+    """Supported LangGraph persistence adapters."""
+
+    MEMORY = "memory"
+    POSTGRES = "postgres"
+
+
 class Settings(BaseSettings):
     """Application configuration with safe offline defaults."""
 
@@ -46,6 +53,8 @@ class Settings(BaseSettings):
     log_level: LogLevel = LogLevel.INFO
     api_prefix: str = "/api"
     sse_heartbeat_seconds: float = Field(default=15.0, gt=0, le=60)
+    checkpoint_backend: CheckpointBackend = CheckpointBackend.MEMORY
+    postgres_dsn: SecretStr | None = Field(default=None, repr=False)
     model_api_key: SecretStr | None = Field(default=None, repr=False)
 
     @field_validator("api_prefix")
