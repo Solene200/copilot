@@ -35,6 +35,13 @@ class CheckpointBackend(StrEnum):
     POSTGRES = "postgres"
 
 
+class MetricsBackend(StrEnum):
+    """Supported metric provider adapters."""
+
+    FIXTURE = "fixture"
+    PROMETHEUS = "prometheus"
+
+
 class Settings(BaseSettings):
     """Application configuration with safe offline defaults."""
 
@@ -55,6 +62,9 @@ class Settings(BaseSettings):
     sse_heartbeat_seconds: float = Field(default=15.0, gt=0, le=60)
     checkpoint_backend: CheckpointBackend = CheckpointBackend.MEMORY
     postgres_dsn: SecretStr | None = Field(default=None, repr=False)
+    metrics_backend: MetricsBackend = MetricsBackend.FIXTURE
+    prometheus_base_url: str = "http://127.0.0.1:9090"
+    prometheus_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
     model_api_key: SecretStr | None = Field(default=None, repr=False)
 
     @field_validator("api_prefix")

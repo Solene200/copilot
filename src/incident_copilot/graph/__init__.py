@@ -1,6 +1,9 @@
 """Bounded LangGraph investigation workflow."""
 
-from incident_copilot.graph.bootstrap import build_offline_investigation_graph
+from incident_copilot.graph.bootstrap import (
+    build_mixed_investigation_graph,
+    build_offline_investigation_graph,
+)
 from incident_copilot.graph.builder import (
     InvestigationGraph,
     build_investigation_graph,
@@ -31,6 +34,7 @@ __all__ = [
     "StepResult",
     "StopReason",
     "build_investigation_graph",
+    "build_mixed_investigation_graph",
     "build_offline_investigation_graph",
     "create_initial_state",
     "decide_after_judge",

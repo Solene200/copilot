@@ -4,16 +4,43 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from incident_copilot.api.errors import register_exception_handlers
 from incident_copilot.api.routes.health import router as health_router
 from incident_copilot.api.routes.investigations import router as investigations_router
-from incident_copilot.core.config import Settings, get_settings
+from incident_copilot.core.config import MetricsBackend, Settings, get_settings
 from incident_copilot.core.logging import configure_logging
-from incident_copilot.graph.bootstrap import build_offline_investigation_graph
+from incident_copilot.graph.bootstrap import (
+    build_mixed_investigation_graph,
+    build_offline_investigation_graph,
+)
+from incident_copilot.graph.builder import InvestigationGraph
 from incident_copilot.investigations.checkpoint import open_checkpointer
 from incident_copilot.investigations.repository import InMemoryInvestigationRepository
 from incident_copilot.investigations.service import InvestigationService
+from incident_copilot.tools.providers import PrometheusMetricsProvider
+
+
+def _build_runtime_graph(
+    settings: Settings,
+    *,
+    checkpointer: BaseCheckpointSaver[str],
+) -> InvestigationGraph:
+    """Select the explicitly configured metric adapter without probing it at startup."""
+    if settings.metrics_backend is MetricsBackend.PROMETHEUS:
+        return build_mixed_investigation_graph(
+            metrics_provider=PrometheusMetricsProvider(
+                settings.prometheus_base_url,
+                timeout_seconds=settings.prometheus_timeout_seconds,
+            ),
+            checkpointer=checkpointer,
+            require_human_review=True,
+        )
+    return build_offline_investigation_graph(
+        checkpointer=checkpointer,
+        require_human_review=True,
+    )
 
 
 def create_app(
@@ -32,10 +59,7 @@ def create_app(
             return
         async with open_checkpointer(resolved_settings) as checkpointer:
             application.state.investigation_service = InvestigationService(
-                graph=build_offline_investigation_graph(
-                    checkpointer=checkpointer,
-                    require_human_review=True,
-                ),
+                graph=_build_runtime_graph(resolved_settings, checkpointer=checkpointer),
                 repository=InMemoryInvestigationRepository(),
             )
             yield
