@@ -14,7 +14,11 @@ from incident_copilot.graph.schemas import (
     InvestigationOptions,
     ModelContext,
     ModelResponse,
+    ModelTask,
+    ModelUsage,
+    PlanOutput,
     StopReason,
+    stable_query_key,
 )
 from incident_copilot.tools.builtin import ProviderBundle, build_tool_registry
 from incident_copilot.tools.exceptions import ProviderUnavailableError
@@ -77,6 +81,25 @@ async def test_graph_runs_a_second_investigation_round_without_repeating_queries
 
 
 @pytest.mark.asyncio
+async def test_parallel_limit_batches_every_planned_step_instead_of_dropping_work() -> None:
+    graph = build_offline_investigation_graph(
+        model=FakeModelProvider(minimum_research_rounds=2),
+        clock=fixed_clock,
+    )
+    initial = create_initial_state(
+        fixture_incident(),
+        options=InvestigationOptions(max_parallel_tools=2),
+        clock=fixed_clock,
+    )
+
+    state = await graph.ainvoke(initial)
+
+    assert state["research_round"] == 2
+    assert state["tool_call_count"] == 10
+    assert len(state["completed_steps"]) == 10
+
+
+@pytest.mark.asyncio
 async def test_graph_stops_exactly_at_maximum_rounds() -> None:
     graph = build_offline_investigation_graph(
         model=FakeModelProvider(minimum_research_rounds=5),
@@ -94,6 +117,8 @@ async def test_graph_stops_exactly_at_maximum_rounds() -> None:
     assert state["stop_reason"] is StopReason.MAX_RESEARCH_ROUNDS
     assert state["tool_call_count"] == 10
     assert state["final_report"].investigation_stats.research_rounds == 2
+    assert state["final_report"].root_cause is None
+    assert state["final_report"].confidence <= 0.55
 
 
 @pytest.mark.asyncio
@@ -139,9 +164,86 @@ async def test_estimated_token_budget_stops_additional_model_calls() -> None:
 
     state = await graph.ainvoke(initial)
 
+    assert state["model_call_count"] == 0
+    assert state["stop_reason"] is StopReason.TOKEN_BUDGET_EXHAUSTED
+    assert state["final_report"].investigation_stats.model_call_count == 0
+
+
+class ExpensiveInvalidModel:
+    """Consume most of the budget while returning invalid structured output."""
+
+    async def complete(self, context: ModelContext) -> ModelResponse:
+        del context
+        return ModelResponse(
+            payload={"unexpected": "value"},
+            usage=ModelUsage(input_tokens=1_950, estimated=True),
+        )
+
+
+@pytest.mark.asyncio
+async def test_estimated_token_budget_blocks_an_unsafe_structured_retry() -> None:
+    graph = build_offline_investigation_graph(model=ExpensiveInvalidModel())
+    initial = create_initial_state(
+        fixture_incident(),
+        options=InvestigationOptions(max_estimated_tokens=2_000),
+    )
+
+    state = await graph.ainvoke(initial)
+
     assert state["model_call_count"] == 1
     assert state["stop_reason"] is StopReason.TOKEN_BUDGET_EXHAUSTED
-    assert state["final_report"].investigation_stats.model_call_count == 1
+    assert state["final_report"].investigation_stats.total_tokens == 1_950
+
+
+@pytest.mark.asyncio
+async def test_already_expired_deadline_skips_tools_and_external_model_calls() -> None:
+    graph = build_offline_investigation_graph()
+    initial = create_initial_state(
+        fixture_incident(),
+        options=InvestigationOptions(timeout_seconds=0.001),
+    )
+    await asyncio.sleep(0.01)
+
+    state = await graph.ainvoke(initial)
+
+    assert state["tool_call_count"] == 0
+    assert state["model_call_count"] == 0
+    assert state["stop_reason"] is StopReason.DEADLINE_EXCEEDED
+    assert state["final_report"].root_cause is None
+
+
+class HangingModel:
+    """Prove the graph owns the model timeout and cancels an async provider task."""
+
+    def __init__(self) -> None:
+        self.cancelled = asyncio.Event()
+
+    async def complete(self, context: ModelContext) -> ModelResponse:
+        del context
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+        raise AssertionError("sleep should be cancelled")
+
+
+@pytest.mark.asyncio
+async def test_hanging_model_is_cancelled_at_deadline_and_degrades_to_report() -> None:
+    model = HangingModel()
+    graph = build_offline_investigation_graph(model=model)
+    initial = create_initial_state(
+        fixture_incident(),
+        options=InvestigationOptions(timeout_seconds=0.02),
+    )
+
+    state = await graph.ainvoke(initial)
+
+    assert model.cancelled.is_set()
+    assert state["model_call_count"] == 1
+    assert state["tool_call_count"] == 0
+    assert state["stop_reason"] is StopReason.DEADLINE_EXCEEDED
+    assert state["final_report"].limitations
 
 
 class InvalidStructuredModel:
@@ -165,6 +267,69 @@ async def test_invalid_structured_model_output_retries_then_degrades() -> None:
     assert state["model_call_count"] == 8
     assert len(state["errors"]) == 8
     assert all(error.component == "model-provider" for error in state["errors"])
+
+
+class FailingModel:
+    """Raise a provider failure rather than returning invalid structured data."""
+
+    async def complete(self, context: ModelContext) -> ModelResponse:
+        del context
+        raise RuntimeError("model backend unavailable")
+
+
+@pytest.mark.asyncio
+async def test_model_provider_exception_retries_then_degrades_without_aborting_graph() -> None:
+    graph = build_offline_investigation_graph(model=FailingModel(), clock=fixed_clock)
+
+    state = await graph.ainvoke(create_initial_state(fixture_incident(), clock=fixed_clock))
+
+    assert state["final_report"].supporting_evidence
+    assert state["model_call_count"] == 8
+    assert len(state["errors"]) == 8
+    assert any(
+        "8 tool/model error(s)" in limitation for limitation in state["final_report"].limitations
+    )
+    assert all(error.category.value == "internal" for error in state["errors"])
+
+
+class UntrustedPlanIdentityModel:
+    """Return valid JSON whose model-owned IDs and round cannot be trusted."""
+
+    def __init__(self) -> None:
+        self._base = FakeModelProvider()
+
+    async def complete(self, context: ModelContext) -> ModelResponse:
+        response = await self._base.complete(context)
+        if context.task is not ModelTask.PLAN:
+            return response
+        output = PlanOutput.model_validate(response.payload)
+        first = output.steps[0]
+        altered = first.model_copy(update={"query_key": "0" * 64, "round_number": 99})
+        duplicate = first.model_copy(
+            update={
+                "step_id": "step_model_duplicate",
+                "query_key": "f" * 64,
+                "round_number": 99,
+            }
+        )
+        poisoned = output.model_copy(update={"steps": (altered, duplicate, *output.steps[2:])})
+        return ModelResponse(payload=poisoned.model_dump(mode="json"), usage=response.usage)
+
+
+@pytest.mark.asyncio
+async def test_graph_recomputes_plan_identity_round_and_cross_query_deduplication() -> None:
+    graph = build_offline_investigation_graph(
+        model=UntrustedPlanIdentityModel(),
+        clock=fixed_clock,
+    )
+
+    state = await graph.ainvoke(create_initial_state(fixture_incident(), clock=fixed_clock))
+
+    steps = state["investigation_plan"].steps
+    assert len(steps) == 6
+    assert all(step.round_number == 1 for step in steps)
+    assert all(step.query_key == stable_query_key(step.tool_name, step.arguments) for step in steps)
+    assert len({step.query_key for step in steps}) == len(steps)
 
 
 class FailingChanges:

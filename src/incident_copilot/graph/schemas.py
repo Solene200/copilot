@@ -1,5 +1,8 @@
 """Validated values exchanged by investigation graph nodes."""
 
+import hashlib
+import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Literal, Self
@@ -13,6 +16,17 @@ from incident_copilot.domain.common import (
     unique_evidence_ids,
 )
 from incident_copilot.domain.hypothesis import Hypothesis, VerificationQuery
+
+
+def stable_query_key(tool_name: str, arguments: Mapping[str, object]) -> str:
+    """Derive the query identity in trusted code rather than accepting a model claim."""
+    canonical = json.dumps(
+        {"tool_name": tool_name, "arguments": arguments},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 class StepStatus(StrEnum):
@@ -154,7 +168,7 @@ class ModelUsage(DomainModel):
 
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
-    estimated: bool = True
+    estimated: bool = False
 
 
 class ModelResponse(DomainModel):

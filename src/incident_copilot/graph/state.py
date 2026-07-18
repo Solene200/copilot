@@ -1,9 +1,11 @@
 """LangGraph state channels and deterministic parallel reducers."""
 
+import json
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Annotated, TypeVar
 
+from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from incident_copilot.domain.evidence import EvidenceRef
@@ -19,7 +21,16 @@ from incident_copilot.graph.schemas import (
     StopReason,
 )
 
-ItemT = TypeVar("ItemT")
+ItemT = TypeVar("ItemT", bound=BaseModel)
+
+
+def _canonical_model(item: BaseModel) -> str:
+    return json.dumps(
+        item.model_dump(mode="json"),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _merge_bounded_by_id(
@@ -30,8 +41,21 @@ def _merge_bounded_by_id(
     rank: Callable[[ItemT], tuple[object, ...]],
     limit: int,
 ) -> tuple[ItemT, ...]:
-    merged = {identity(item): item for item in (*left, *right)}
-    return tuple(sorted(merged.values(), key=rank)[:limit])
+    merged: dict[str, ItemT] = {}
+    for item in (*left, *right):
+        item_id = identity(item)
+        current = merged.get(item_id)
+        if current is None or (rank(item), _canonical_model(item)) < (
+            rank(current),
+            _canonical_model(current),
+        ):
+            merged[item_id] = item
+    return tuple(
+        sorted(
+            merged.values(),
+            key=lambda item: (rank(item), identity(item), _canonical_model(item)),
+        )[:limit]
+    )
 
 
 def merge_evidence(

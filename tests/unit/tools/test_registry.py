@@ -163,6 +163,34 @@ async def test_registry_retries_transient_provider_failure_then_succeeds() -> No
 
 
 @pytest.mark.asyncio
+async def test_registry_never_retries_past_callers_remaining_budget() -> None:
+    calls = 0
+
+    async def handler(query: SearchLogsInput, context: QueryContext) -> Sequence[Evidence]:
+        nonlocal calls
+        del query, context
+        calls += 1
+        raise ProviderUnavailableError(
+            "temporary outage",
+            provider_name="bounded-provider",
+            operation="search",
+        )
+
+    registry = ToolRegistry(retry_backoff_seconds=0)
+    registry.register(make_definition(handler, max_retries=3))
+
+    with pytest.raises(ToolExecutionError) as captured:
+        await registry.execute(
+            "search_logs",
+            valid_arguments(),
+            make_context(remaining_tool_calls=1),
+        )
+
+    assert captured.value.attempts == 1
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 async def test_registry_does_not_retry_permanent_provider_failure() -> None:
     calls = 0
 

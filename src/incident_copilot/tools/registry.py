@@ -106,7 +106,8 @@ class ToolRegistry:
         )
 
         attempts = 0
-        while attempts <= definition.max_retries:
+        max_attempts = min(definition.max_retries + 1, context.remaining_tool_calls)
+        while attempts < max_attempts:
             attempts += 1
             remaining_seconds = (context.deadline - datetime.now(UTC)).total_seconds()
             if remaining_seconds <= 0:
@@ -159,7 +160,7 @@ class ToolRegistry:
                     )
                     return result
 
-            if failure.retryable and attempts <= definition.max_retries:
+            if failure.retryable and attempts < max_attempts:
                 backoff = self._retry_backoff_seconds * (2 ** (attempts - 1))
                 remaining_seconds = (context.deadline - datetime.now(UTC)).total_seconds()
                 if backoff < remaining_seconds:

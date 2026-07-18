@@ -80,7 +80,7 @@ Fake Embedding 只用于验证确定性管线，不代表在线 embedding 的语
 uv run python scripts/run_investigation.py
 ```
 
-默认装配使用 Fixture Provider、Phase 3 Hybrid RAG 和 Fake Model，不需要 API Key 或网络。Graph 通过动态 `Send` 并行收集证据，使用稳定 ID reducer 汇合；研究轮数、并发、工具调用、模型调用、估算 Token 和 deadline 均有代码预算。结构化模型输出经 Pydantic 校验，连续无效时有限重试并转入明确规则降级。
+默认装配使用 Fixture Provider、Phase 3 Hybrid RAG 和 Fake Model，不需要 API Key 或网络。Graph 通过动态 `Send` 并行收集证据，按并发上限分批执行全部计划步骤，并使用稳定 ID reducer 汇合；研究轮数、真实 Provider 尝试、模型调用、估算 Token 和 deadline 均有代码预算。结构化模型输出经 Pydantic 校验，模型超时、运行异常或连续无效时有限重试并转入明确规则降级。
 
 当前源码图位于 [docs/GRAPH_CURRENT.md](docs/GRAPH_CURRENT.md)。检查文档是否与编译图一致：
 
@@ -88,7 +88,7 @@ uv run python scripts/run_investigation.py
 uv run python scripts/render_graph.py --check docs/GRAPH_CURRENT.md
 ```
 
-Fake Model 只验证控制流、结构化边界和可复现演示，不代表真实模型诊断准确率；报告 disposition、confidence 和估算 Token 也不是 Evaluation 结果。
+Fake Model 只验证控制流、结构化边界和可复现演示；假设文本从高相关 Evidence summary 派生，不读取 evaluation ground truth，但其规划配方仍只面向 payment-service 场景，不代表真实模型诊断准确率。报告 disposition、confidence 和估算 Token 也不是 Evaluation 结果。
 
 ## 质量检查
 

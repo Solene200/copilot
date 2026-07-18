@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Hashable
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Literal, overload
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -11,7 +11,7 @@ from langgraph.types import Send
 from incident_copilot.domain.incident import IncidentContext
 from incident_copilot.graph.model import ModelProvider
 from incident_copilot.graph.nodes import InvestigationNodes, utc_now
-from incident_copilot.graph.routing import route_after_judge
+from incident_copilot.graph.routing import route_after_judge, route_after_parse
 from incident_copilot.graph.schemas import InvestigationOptions, ModelUsage
 from incident_copilot.graph.state import InvestigationState
 from incident_copilot.tools.registry import ToolRegistry
@@ -61,8 +61,43 @@ def create_initial_state(
 
 def dispatch_evidence_collection(
     state: InvestigationState,
-) -> list[Send] | Literal["aggregate_evidence"]:
+) -> list[Send] | Literal["aggregate_evidence", "generate_report"]:
     """Reserve budget before fan-out and send minimal per-step state in parallel."""
+    if state.get("stop_reason") is not None:
+        return "generate_report"
+    return _dispatch_batch(state, empty_target="aggregate_evidence")
+
+
+def dispatch_after_aggregate(
+    state: InvestigationState,
+) -> list[Send] | Literal["generate_hypotheses", "generate_report"]:
+    """Run another bounded batch or leave collection only after the plan is drained."""
+    if state.get("stop_reason") is not None:
+        return "generate_report"
+    return _dispatch_batch(state, empty_target="generate_hypotheses")
+
+
+@overload
+def _dispatch_batch(
+    state: InvestigationState,
+    *,
+    empty_target: Literal["aggregate_evidence"],
+) -> list[Send] | Literal["aggregate_evidence"]: ...
+
+
+@overload
+def _dispatch_batch(
+    state: InvestigationState,
+    *,
+    empty_target: Literal["generate_hypotheses"],
+) -> list[Send] | Literal["generate_hypotheses"]: ...
+
+
+def _dispatch_batch(
+    state: InvestigationState,
+    *,
+    empty_target: Literal["aggregate_evidence", "generate_hypotheses"],
+) -> list[Send] | Literal["aggregate_evidence", "generate_hypotheses"]:
     remaining = max(0, state["max_tool_calls"] - state.get("tool_call_count", 0))
     limit = min(remaining, state["max_parallel_tools"])
     completed_queries = {item.query_key for item in state.get("completed_steps", ())}
@@ -76,7 +111,7 @@ def dispatch_evidence_collection(
     )
     selected = candidates[:limit]
     if not selected:
-        return "aggregate_evidence"
+        return empty_target
     return [
         Send(
             "collect_evidence",
@@ -110,10 +145,18 @@ def build_investigation_graph(
     builder.add_node("generate_report", nodes.generate_report)
 
     builder.add_edge(START, "parse_incident")
-    builder.add_edge("parse_incident", "build_investigation_plan")
+    builder.add_conditional_edges(
+        "parse_incident",
+        route_after_parse,
+        path_map={
+            "build_investigation_plan": "build_investigation_plan",
+            "generate_report": "generate_report",
+        },
+    )
     dispatch_targets: dict[Hashable, str] = {
         "collect_evidence": "collect_evidence",
         "aggregate_evidence": "aggregate_evidence",
+        "generate_report": "generate_report",
     }
     builder.add_conditional_edges(
         "build_investigation_plan",
@@ -121,7 +164,15 @@ def build_investigation_graph(
         path_map=dispatch_targets,
     )
     builder.add_edge("collect_evidence", "aggregate_evidence")
-    builder.add_edge("aggregate_evidence", "generate_hypotheses")
+    builder.add_conditional_edges(
+        "aggregate_evidence",
+        dispatch_after_aggregate,
+        path_map={
+            "collect_evidence": "collect_evidence",
+            "generate_hypotheses": "generate_hypotheses",
+            "generate_report": "generate_report",
+        },
+    )
     builder.add_edge("generate_hypotheses", "verify_hypotheses")
     builder.add_edge("verify_hypotheses", "judge_evidence")
     route_targets: dict[Hashable, str] = {

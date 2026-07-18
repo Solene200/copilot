@@ -199,14 +199,14 @@
 
 ### 实际验收
 
-- [x] LangGraph 1.2.9 的 `StateGraph` 使用动态 `Send` 将最多 7 个最小作用域工具步骤分发到同一 `collect_evidence` 节点，并通过 reducer 汇合；异步栅栏测试证明 7 个初始分支同时启动，不以耗时阈值冒充并行证据。
-- [x] Evidence、StepResult 和 Error reducer 使用稳定 ID 去重及确定性有界排序；并行计数使用增量求和；单测覆盖幂等、交换/结合等价用例和路由优先级。
-- [x] 调查循环具有最大研究轮数、工具调用、并发、模型调用、估算 Token 和 deadline 预算；二次调查执行 10 个不重复查询，最大轮数精确停在第 2 轮，工具/模型/Token 预算均有终止断言。
-- [x] 所有模型任务通过 Pydantic 结构化 Schema；连续无效输出每任务最多重试 2 次，之后使用可审计的规则/Fake 降级，不调用在线模型或付费 API。
+- [x] LangGraph 1.2.9 的 `StateGraph` 使用动态 `Send` 将最小作用域工具步骤分发到同一 `collect_evidence` 节点，并通过 reducer 汇合；并发上限小于计划长度时会经过 aggregate 回边继续分批执行。异步栅栏测试证明 7 个初始分支同时启动，不以耗时阈值冒充并行证据。
+- [x] Evidence、StepResult 和 Error reducer 使用稳定 ID 去重及确定性有界排序；同 ID 冲突载荷也与合并顺序无关，并行计数使用增量求和；单测覆盖幂等、交换/结合等价用例和路由优先级。
+- [x] 调查循环具有最大研究轮数、真实工具尝试、并发、模型调用、估算 Token 和 deadline 预算；二次调查执行 10 个不重复查询，最大轮数精确停在第 2 轮，已过期 invocation 为 0 工具/0 外部模型调用，工具/模型/Token 预算均有终止断言。
+- [x] 所有模型任务通过 Pydantic 结构化 Schema；模型 timeout、Provider 异常或连续无效输出每任务最多尝试 2 次，之后使用可审计的规则/Fake 降级，不调用在线模型或付费 API。step/query identity 和 round 由可信代码重算。
 - [x] 单 Change Provider 失败时其它 6 个初始分支成功，错误进入 State 和报告 limitation，仍生成带真实 Evidence ID 与 Citation 的报告。
 - [x] `scripts/run_investigation.py` 实际生成 `probable` 报告：1 个研究轮、7 次工具调用、4 次 Fake Model 调用、13 条六类证据，停止原因 `evidence_sufficient`；这些只是固定演示运行数据，不是性能或准确率评估。
 - [x] [`GRAPH_CURRENT.md`](GRAPH_CURRENT.md) 由当前编译图导出，`scripts/render_graph.py --check` 与集成测试逐字符校验；图中没有未实现的 HITL/checkpoint/API。
-- [x] `uv sync`、`uv lock --check`、Ruff format/check、`mypy src tests scripts`、22 项 Phase 4 测试和 121 项全量测试全部通过；默认测试无网络、无 API Key、无真实数据库。
+- [x] `uv sync`、`uv lock --check`、Ruff format/check、`mypy src tests scripts`、47 项 Phase 4/工具预算相关测试和 130 项全量测试全部通过；默认测试无网络、无 API Key、无真实数据库。
 
 ## 8. Phase 5：API、Streaming、Checkpoint 和 HITL
 

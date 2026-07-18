@@ -1,7 +1,6 @@
 """Structured model port and deterministic offline implementation."""
 
 import hashlib
-import json
 from datetime import timedelta
 from typing import Protocol
 
@@ -19,6 +18,7 @@ from incident_copilot.graph.schemas import (
     PlanOutput,
     ReportDraftOutput,
     SufficiencyOutput,
+    stable_query_key,
 )
 
 
@@ -28,16 +28,6 @@ class ModelProvider(Protocol):
     async def complete(self, context: ModelContext) -> ModelResponse:
         """Complete exactly one allow-listed structured task."""
         ...
-
-
-def _stable_query_key(tool_name: str, arguments: dict[str, object]) -> str:
-    canonical = json.dumps(
-        {"tool_name": tool_name, "arguments": arguments},
-        sort_keys=True,
-        separators=(",", ":"),
-        default=str,
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _step(
@@ -50,7 +40,7 @@ def _step(
     arguments: dict[str, object],
     priority: int,
 ) -> InvestigationStep:
-    query_key = _stable_query_key(tool_name, arguments)
+    query_key = stable_query_key(tool_name, arguments)
     return InvestigationStep(
         step_id=f"step_r{round_number}_{ordinal}_{query_key[:12]}",
         query_key=query_key,
@@ -254,12 +244,19 @@ class FakeModelProvider:
             if isinstance(score, (int, float)) and not isinstance(score, bool) and score >= 0.75:
                 relevant.append(item)
         supporting_ids = tuple(str(item["evidence_id"]) for item in relevant[:20])
+        evidence_summary = " ".join(
+            str(item.get("summary", "")).strip() for item in relevant[:3]
+        ).strip()
         description = (
-            "The payment-service database connection pool was saturated after its configured "
-            "connection limit was reduced."
-        )
+            f"The leading evidence pattern for {context.service} is: {evidence_summary}"
+            if evidence_summary
+            else f"The available evidence does not yet establish a cause for {context.service}."
+        )[:2_000]
+        hypothesis_digest = hashlib.sha256(
+            f"{context.incident_id}|{'|'.join(supporting_ids)}".encode()
+        ).hexdigest()[:24]
         hypothesis = Hypothesis(
-            hypothesis_id="hyp_payment_db_pool_saturation",
+            hypothesis_id=f"hyp_{hypothesis_digest}",
             description=description,
             affected_services=(context.service,),
             supporting_evidence_ids=supporting_ids,
@@ -267,17 +264,14 @@ class FakeModelProvider:
             status=HypothesisStatus.PROPOSED,
             verification_queries=(
                 VerificationQuery(
-                    query=(
-                        "Compare pool saturation, acquisition timeout, and recent configuration "
-                        "changes."
-                    ),
+                    query="Compare the leading symptoms with changes and independent signals.",
                     source_types=(SourceType.METRIC, SourceType.LOG, SourceType.CHANGE),
                     service=context.service,
                 ),
             ),
             reasoning_summary=(
-                "The evidence packet links saturation and acquisition timeouts to a recent limit "
-                "change."
+                "This deterministic fake groups only high-relevance cited summaries; it does not "
+                "use fixture ground truth or claim general diagnostic ability."
             ),
             version=context.research_round,
         )
@@ -323,12 +317,11 @@ class FakeModelProvider:
                 "Confidence is limited to the cited evidence collected by read-only tools."
             ),
             remediation_actions=(
-                "Review the connection-pool limit change and restore the validated value after "
-                "approval.",
-                "Validate pool utilization, acquisition latency, and payment error rate after "
-                "mitigation.",
+                "Review the highest-relevance cited change and reverse it only after approval.",
+                "Validate the affected service and all cited signals after mitigation.",
             ),
             risks=(
-                "Changing connection limits can overload the database; require human approval.",
+                "Acting on an offline rule-based hypothesis can worsen impact; "
+                "require human approval.",
             ),
         )

@@ -1,5 +1,6 @@
 """Investigation graph node implementations with explicit degradation paths."""
 
+import asyncio
 import hashlib
 from collections import Counter
 from collections.abc import Callable, Sequence
@@ -24,12 +25,13 @@ from incident_copilot.domain.report import (
     TimelineEvent,
 )
 from incident_copilot.graph.model import FakeModelProvider, ModelProvider
-from incident_copilot.graph.routing import decide_after_judge
+from incident_copilot.graph.routing import budget_stop_reason, decide_after_judge
 from incident_copilot.graph.schemas import (
     ErrorCategory,
     HypothesesOutput,
     InvestigationError,
     InvestigationPlan,
+    InvestigationStep,
     ModelContext,
     ModelTask,
     ModelUsage,
@@ -39,8 +41,9 @@ from incident_copilot.graph.schemas import (
     StepStatus,
     StopReason,
     SufficiencyOutput,
+    stable_query_key,
 )
-from incident_copilot.graph.state import InvestigationState, add_usage
+from incident_copilot.graph.state import InvestigationState, add_usage, merge_errors
 from incident_copilot.tools.exceptions import ToolError, ToolExecutionError
 from incident_copilot.tools.registry import ToolRegistry
 from incident_copilot.tools.schemas import QueryContext
@@ -62,6 +65,7 @@ class StructuredCall(Generic[OutputT]):
     call_count: int
     usage: ModelUsage
     errors: tuple[InvestigationError, ...]
+    stop_reason: StopReason | None = None
 
 
 class InvestigationNodes:
@@ -83,7 +87,11 @@ class InvestigationNodes:
         """Accept the already-domain-validated incident at the graph boundary."""
         if not state["incident"].services:
             raise ValueError("investigation requires at least one normalized service")
-        return {"deadline_exceeded": self._clock() >= state["deadline_at"]}
+        deadline_exceeded = self._clock() >= state["deadline_at"]
+        update: InvestigationState = {"deadline_exceeded": deadline_exceeded}
+        if deadline_exceeded:
+            update["stop_reason"] = StopReason.DEADLINE_EXCEEDED
+        return update
 
     async def build_investigation_plan(self, state: InvestigationState) -> InvestigationState:
         """Generate the first bounded plan through a structured output Schema."""
@@ -148,8 +156,15 @@ class InvestigationNodes:
         }
 
     async def aggregate_evidence(self, state: InvestigationState) -> InvestigationState:
-        """Mark deadline state after all map branches have reached the barrier."""
-        return {"deadline_exceeded": self._clock() >= state["deadline_at"]}
+        """Mark hard stops after all branches in the current batch reach the barrier."""
+        deadline_exceeded = self._clock() >= state["deadline_at"]
+        projected = state.copy()
+        projected["deadline_exceeded"] = deadline_exceeded
+        update: InvestigationState = {"deadline_exceeded": deadline_exceeded}
+        reason = budget_stop_reason(projected)
+        if reason is not None:
+            update["stop_reason"] = reason
+        return update
 
     async def generate_hypotheses(self, state: InvestigationState) -> InvestigationState:
         """Generate Schema-validated hypotheses or use the deterministic fallback."""
@@ -161,6 +176,7 @@ class InvestigationNodes:
             "model_call_count": call.call_count,
             "model_usage": call.usage,
             "errors": call.errors,
+            **({"stop_reason": call.stop_reason} if call.stop_reason is not None else {}),
         }
 
     async def verify_hypotheses(self, state: InvestigationState) -> InvestigationState:
@@ -219,6 +235,8 @@ class InvestigationNodes:
         projected["deadline_exceeded"] = deadline_exceeded
         projected["model_call_count"] = state.get("model_call_count", 0) + call.call_count
         projected["model_usage"] = add_usage(state.get("model_usage", ModelUsage()), call.usage)
+        if call.stop_reason is not None:
+            projected["stop_reason"] = call.stop_reason
         decision = decide_after_judge(projected)
         update: InvestigationState = {
             "evidence_sufficient": sufficient,
@@ -231,6 +249,8 @@ class InvestigationNodes:
         }
         if decision.stop_reason is not None:
             update["stop_reason"] = decision.stop_reason
+        elif call.stop_reason is not None:
+            update["stop_reason"] = call.stop_reason
         return update
 
     async def generate_report(self, state: InvestigationState) -> InvestigationState:
@@ -241,7 +261,8 @@ class InvestigationNodes:
         completed_at = self._clock()
         evidence = state.get("evidence", ())
         evidence_by_id = {item.evidence_id: item for item in evidence}
-        leading = state.get("hypotheses", (None,))[0]
+        hypotheses = state.get("hypotheses", ())
+        leading = hypotheses[0] if hypotheses else None
         supporting_ids = leading.supporting_evidence_ids if leading is not None else ()
         contradicting_ids = leading.contradicting_evidence_ids if leading is not None else ()
         supporting = tuple(
@@ -269,8 +290,9 @@ class InvestigationNodes:
         limitations = (
             [f"missing evidence sources: {', '.join(missing_sources)}"] if missing_sources else []
         )
-        if state.get("errors"):
-            limitations.append(f"{len(state['errors'])} tool/model error(s) were degraded")
+        all_errors = merge_errors(state.get("errors", ()), call.errors)
+        if all_errors:
+            limitations.append(f"{len(all_errors)} tool/model error(s) were degraded")
         if disposition is ReportDisposition.INCONCLUSIVE:
             limitations.append(f"research stopped because {stop_reason.value}")
         usage = add_usage(state.get("model_usage", ModelUsage()), call.usage)
@@ -280,9 +302,15 @@ class InvestigationNodes:
             report_id=f"rpt_{state['incident'].incident_id.removeprefix('inc_')}",
             incident_id=state["incident"].incident_id,
             summary=draft.summary,
-            root_cause=draft.root_cause,
+            root_cause=(draft.root_cause if disposition is ReportDisposition.PROBABLE else None),
             disposition=disposition,
-            confidence=leading.confidence if leading is not None else 0.0,
+            confidence=(
+                leading.confidence
+                if disposition is ReportDisposition.PROBABLE and leading is not None
+                else min(leading.confidence, 0.55)
+                if leading is not None
+                else 0.0
+            ),
             confidence_rationale=draft.confidence_rationale,
             affected_services=state["incident"].services,
             timeline=timeline,
@@ -339,11 +367,26 @@ class InvestigationNodes:
         output = call.value or await self._fallback(context, PlanOutput)
         allowed = set(self._registry.tool_names)
         completed_queries = {item.query_key for item in state.get("completed_steps", ())}
-        steps = tuple(
-            step
-            for step in output.steps
-            if step.tool_name in allowed and step.query_key not in completed_queries
-        )
+        seen_queries: set[str] = set()
+        normalized_steps: list[InvestigationStep] = []
+        for ordinal, step in enumerate(output.steps, start=1):
+            if step.tool_name not in allowed:
+                continue
+            query_key = stable_query_key(step.tool_name, step.arguments)
+            if query_key in completed_queries or query_key in seen_queries:
+                continue
+            seen_queries.add(query_key)
+            normalized_steps.append(
+                InvestigationStep.model_validate(
+                    {
+                        **step.model_dump(mode="python"),
+                        "step_id": f"step_r{round_number}_{ordinal}_{query_key[:12]}",
+                        "query_key": query_key,
+                        "round_number": round_number,
+                    }
+                )
+            )
+        steps = tuple(normalized_steps)
         plan_hash = hashlib.sha256(
             "|".join(step.step_id for step in steps).encode("utf-8")
         ).hexdigest()[:16]
@@ -355,13 +398,25 @@ class InvestigationNodes:
             coverage_targets=tuple(dict.fromkeys(step.source_type for step in steps)),
             rationale=output.rationale,
         )
-        return {
+        deadline_exceeded = self._clock() >= state["deadline_at"]
+        projected = state.copy()
+        projected["deadline_exceeded"] = deadline_exceeded
+        projected["model_call_count"] = state.get("model_call_count", 0) + call.call_count
+        projected["model_usage"] = add_usage(state.get("model_usage", ModelUsage()), call.usage)
+        update: InvestigationState = {
             "investigation_plan": plan,
             "pending_steps": steps,
             "model_call_count": call.call_count,
             "model_usage": call.usage,
             "errors": call.errors,
+            "deadline_exceeded": deadline_exceeded,
         }
+        reason = budget_stop_reason(projected)
+        if call.stop_reason is not None:
+            update["stop_reason"] = call.stop_reason
+        elif reason is not None:
+            update["stop_reason"] = reason
+        return update
 
     async def _call_structured(
         self,
@@ -371,37 +426,134 @@ class InvestigationNodes:
     ) -> StructuredCall[OutputT]:
         remaining = max(0, state["max_model_calls"] - state.get("model_call_count", 0))
         prior_usage = state.get("model_usage", ModelUsage())
+        estimated_input_tokens = max(1, len(context.model_dump_json()) // 4)
         tokens_exhausted = (
-            prior_usage.input_tokens + prior_usage.output_tokens >= state["max_estimated_tokens"]
+            state.get("stop_reason") is StopReason.TOKEN_BUDGET_EXHAUSTED
+            or prior_usage.input_tokens + prior_usage.output_tokens + estimated_input_tokens
+            >= state["max_estimated_tokens"]
         )
-        attempts = 0 if tokens_exhausted else min(2, remaining)
+        deadline_exceeded = (
+            state.get("stop_reason") is StopReason.DEADLINE_EXCEEDED
+            or self._clock() >= state["deadline_at"]
+        )
+        max_attempts = 0 if tokens_exhausted or deadline_exceeded else min(2, remaining)
+        call_count = 0
         errors: list[InvestigationError] = []
         usage = ModelUsage()
-        for attempt in range(1, attempts + 1):
+        for attempt in range(1, max_attempts + 1):
+            projected_retry_tokens = (
+                prior_usage.input_tokens
+                + prior_usage.output_tokens
+                + usage.input_tokens
+                + usage.output_tokens
+                + estimated_input_tokens
+            )
+            if attempt > 1 and projected_retry_tokens >= state["max_estimated_tokens"]:
+                tokens_exhausted = True
+                errors.append(
+                    self._model_error(
+                        context.task,
+                        context.research_round,
+                        attempt,
+                        RuntimeError("estimated token budget exhausted before retry"),
+                        category=ErrorCategory.BUDGET,
+                    )
+                )
+                break
+            remaining_seconds = (state["deadline_at"] - self._clock()).total_seconds()
+            if remaining_seconds <= 0:
+                deadline_exceeded = True
+                errors.append(
+                    self._model_error(
+                        context.task,
+                        context.research_round,
+                        max(1, call_count + 1),
+                        TimeoutError("investigation deadline exceeded"),
+                        category=ErrorCategory.TIMEOUT,
+                    )
+                )
+                break
+            call_count += 1
             try:
-                response = await self._model.complete(context)
+                response = await asyncio.wait_for(
+                    self._model.complete(context), timeout=remaining_seconds
+                )
                 usage = add_usage(usage, response.usage)
                 value = schema.model_validate(response.payload)
+            except TimeoutError as exc:
+                deadline_exceeded = True
+                errors.append(
+                    self._model_error(
+                        context.task,
+                        context.research_round,
+                        attempt,
+                        exc,
+                        category=ErrorCategory.TIMEOUT,
+                    )
+                )
+                break
             except (ValidationError, ValueError, TypeError) as exc:
                 errors.append(self._model_error(context.task, context.research_round, attempt, exc))
+                if (
+                    prior_usage.input_tokens
+                    + prior_usage.output_tokens
+                    + usage.input_tokens
+                    + usage.output_tokens
+                    >= state["max_estimated_tokens"]
+                ):
+                    tokens_exhausted = True
+                    break
+            except Exception as exc:
+                errors.append(
+                    self._model_error(
+                        context.task,
+                        context.research_round,
+                        attempt,
+                        exc,
+                        category=(
+                            ErrorCategory.UNAVAILABLE
+                            if isinstance(exc, (ConnectionError, OSError))
+                            else ErrorCategory.INTERNAL
+                        ),
+                    )
+                )
             else:
-                return StructuredCall(value, attempt, usage, tuple(errors))
-        if attempts == 0:
-            message = (
-                "estimated token budget exhausted"
-                if tokens_exhausted
-                else "model call budget exhausted"
-            )
+                return StructuredCall(value, call_count, usage, tuple(errors))
+        if max_attempts == 0:
+            if deadline_exceeded:
+                message = "investigation deadline exceeded"
+                category = ErrorCategory.TIMEOUT
+            elif tokens_exhausted:
+                message = "estimated token budget exhausted"
+                category = ErrorCategory.BUDGET
+            else:
+                message = "model call budget exhausted"
+                category = ErrorCategory.BUDGET
             errors.append(
                 self._model_error(
                     context.task,
                     context.research_round,
                     1,
                     RuntimeError(message),
-                    category=ErrorCategory.BUDGET,
+                    category=category,
                 )
             )
-        return StructuredCall(None, attempts, usage, tuple(errors))
+        if (
+            prior_usage.input_tokens
+            + prior_usage.output_tokens
+            + usage.input_tokens
+            + usage.output_tokens
+            >= state["max_estimated_tokens"]
+        ):
+            tokens_exhausted = True
+        stop_reason: StopReason | None = None
+        if deadline_exceeded:
+            stop_reason = StopReason.DEADLINE_EXCEEDED
+        elif tokens_exhausted:
+            stop_reason = StopReason.TOKEN_BUDGET_EXHAUSTED
+        elif remaining == 0:
+            stop_reason = StopReason.MODEL_BUDGET_EXHAUSTED
+        return StructuredCall(None, call_count, usage, tuple(errors), stop_reason)
 
     async def _fallback(self, context: ModelContext, schema: type[OutputT]) -> OutputT:
         response = await self._fallback_model.complete(context)
