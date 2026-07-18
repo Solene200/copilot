@@ -4,8 +4,8 @@
 
 | 项目 | 值 |
 | --- | --- |
-| 当前已完成阶段 | Phase 4 |
-| 下一阶段 | Phase 5（等待用户明确确认） |
+| 当前已完成阶段 | Phase 6 |
+| 下一阶段 | Phase 7（等待用户明确确认） |
 | 最近更新 | 2026-07-18 |
 | 仓库初始状态 | 空目录，无 `.git` 元数据 |
 | 当前运行环境 | Windows / PowerShell；Python 3.13 可用 |
@@ -527,3 +527,62 @@ uv run python scripts/run_api_demo.py
 - Windows 默认 ProactorEventLoop 不被异步 psycopg 支持；新增 `python -m incident_copilot.server`，使用 `SelectorEventLoop` 承载 Uvicorn/PostgreSQL backend。
 - 真实验证中，第一个应用进程将调查暂停为 `waiting_review` 后完全退出；第二个进程用相同 PostgreSQL checkpoint 恢复同一 `thread_id`，接受反馈后进入 `completed`。查询得到 11 条 checkpoint、102 条 checkpoint write。
 - 环境加固后的最终门禁：锁文件解析 66 个包，PostgreSQL extra 环境检查 65 个已安装包；Ruff、89 个文件 mypy 和 148 项全量测试通过。Docker client/server 均为 29.6.1，数据库容器状态为 running/healthy。
+
+## Phase 6 — Evaluation 和 Agent 可观测性
+
+### 状态
+
+`completed`
+
+### 完成内容
+
+- 新增 `data/evaluation/incidents-v1.json` 版本化数据集，包含连接池耗尽、DNS 配置错误、cache TTL 回归 3 个不同根因；标签只由 evaluator 消费。
+- 新增严格 Evaluation Schema、仓库安全加载器、纯函数 evaluator 和离线 Runner，输出完整报告、逐样例 JSONL、JSON/Markdown 汇总，并保留失败样例。
+- 指标覆盖服务定位、故障类型、Recall@K、MRR、工具选择/参数、Evidence relevance、引用正确性、根因准确率、调查轮数、工具次数、wall-clock 时延和 Token；成本无定价时显式 unavailable。
+- 新增 checkout/inventory 脱敏 Fixture 与对应 Runbook；仍通过现有 Provider/RAG 契约运行，没有按样例向 Agent 注入答案。
+- 节点、工具和结构化模型调用增加默认关闭的 OpenTelemetry spans；关闭时不导入可选包。LangSmith 只在 CLI 显式 `--langsmith` 时启用，默认 Runner 强制关闭 tracing。
+- 提交真实基线原始结果和汇总，并在 `docs/EVALUATION.md` 记录指标定义、运行方法、实际数值及不可泛化限制。
+
+### 分步 Git 记录
+
+- `54aa5af`：版本化数据集、三个故障样例、评估器、Runner 与 CLI。
+- `ec2332d`：评估边界、禁网、失败保留和原始/汇总输出测试。
+- `0c91b44`：默认关闭的节点/工具/模型 OpenTelemetry spans 与可选 extra。
+- `8defa0f`：知识语料扩展后的 RAG 规模回归断言。
+
+### 实际检查结果
+
+| 命令/检查 | 真实结果 |
+| --- | --- |
+| `uv sync` | PASS：默认环境同步完成；可选 observability 依赖不作为默认安装要求 |
+| `uv lock --check` | PASS：锁文件与项目元数据一致，解析 69 个包 |
+| `uv run ruff format --check .` | PASS：100 个 Python 文件已格式化 |
+| `uv run ruff check .` | PASS：All checks passed |
+| `uv run mypy src tests scripts` | PASS：100 个 source files，0 issues |
+| Phase 6 pytest | PASS：17 passed，0 warning，0.62s |
+| 受影响 RAG 回归 | PASS：20 passed，0.31s |
+| `uv run pytest` | PASS：165 passed，0 warning，2.71s |
+| 离线 Evaluation | PASS：3/3 样例完成，0 失败；生成 JSONL、JSON、Markdown |
+
+耗时仅是本机单次命令记录，不是性能 benchmark。评估基线的平均时延 12.0933 ms、P95 14.9645 ms 也只适用于本次 3 样例固定运行。
+
+### 已知问题
+
+- 数据集只有 3 个同仓脱敏样例，Fake Model 与知识库均为确定性实现；1.0 的服务、故障类型、检索、引用和根因指标不能外推到生产流量。
+- 根因准确率使用版本化词法标签而非人工盲审或独立模型 judge；对同义表达和复杂多根因事故覆盖有限。
+- Token 为 Fake Model 字符估算，不是供应商 tokenizer 账单；未配置模型定价，因此成本不可用。
+- OpenTelemetry 只提供 instrumentation；实际 exporter、采样、collector 和后端由宿主配置。LangSmith 未在默认测试或基线中联网验证。
+- Phase 5 的持久化任务/事件 Repository、分布式 worker 等生产化缺口仍未改变，Phase 6 没有掩盖或实现 Phase 7 能力。
+
+### 手动验证
+
+```text
+uv sync
+uv run python -m scripts.evaluate_offline --output-dir artifacts/evaluation/manual
+```
+
+检查 `raw-results.jsonl` 有 3 行、`summary.json` 的完成/失败计数平衡、`summary.md` 明确 estimated Token 与 unavailable cost。
+
+### 下一阶段建议
+
+完成本阶段后停止。只有用户明确要求 Phase 7 才开始真实 Prometheus/Loki/Tempo/OpenTelemetry Demo Adapter、Compose 演示与面试材料；进入前应冻结数据集 `1.0.0`，新增版本而不是修改旧标签。

@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "run_id": "evalrun_20260718T085033Z_58a018e0",
+  "dataset_id": "dataset_incident_copilot_offline",
+  "dataset_version": "1.0.0",
+  "started_at": "2026-07-18T08:50:33.666991Z",
+  "completed_at": "2026-07-18T08:50:33.762428Z",
+  "sample_count": 3,
+  "completed_sample_count": 3,
+  "failed_sample_count": 0,
+  "metrics": {
+    "service_localization_accuracy": 1.0,
+    "failure_type_accuracy": 1.0,
+    "retrieval_recall_at_k": 1.0,
+    "retrieval_mrr": 1.0,
+    "tool_selection_f1": 0.9487179487179486,
+    "tool_argument_accuracy": 0.7857142857142857,
+    "evidence_relevance_f1": 0.7851851851851852,
+    "citation_correctness": 1.0,
+    "root_cause_accuracy": 1.0,
+    "mean_research_rounds": 1.0,
+    "mean_tool_calls": 7.0,
+    "mean_latency_ms": 12.093300000439436,
+    "p95_latency_ms": 14.964450001025398,
+    "total_tokens": 12353,
+    "mean_tokens": 4117.666666666667,
+    "token_usage_estimated": true,
+    "estimated_cost_usd": null,
+    "cost_status": "unavailable_no_pricing"
+  },
+  "raw_results_file": "raw-results.jsonl",
+  "limitations": [
+    "This is a fixture regression evaluation, not a production generalization claim.",
+    "Latency is single-process wall-clock time on the current machine, not a benchmark.",
+    "Fake Model token counts are deterministic character-based estimates.",
+    "Root-cause accuracy uses versioned lexical indicators, not an LLM-as-judge.",
+    "Cost is unavailable because no provider pricing was configured."
+  ],
+  "generated_at": "2026-07-18T08:50:33.762598Z"
+}

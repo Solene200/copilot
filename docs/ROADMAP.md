@@ -17,8 +17,8 @@
 | 2 | Fixture Provider 和工具层 | completed | 七类本地工具返回结构化证据 |
 | 3 | RAG Indexing 和 Retrieval | completed | 可复现 Hybrid Search 与引用 |
 | 4 | LangGraph 调查工作流 | completed | 完整有界调查循环与报告 |
-| 5 | API、Streaming、Checkpoint、HITL | not_started | 可创建、观察、恢复和审核调查 |
-| 6 | Evaluation 和 Agent 可观测性 | not_started | 可复现质量/成本/时延报告 |
+| 5 | API、Streaming、Checkpoint、HITL | completed | 可创建、观察、恢复和审核调查 |
+| 6 | Evaluation 和 Agent 可观测性 | completed | 可复现质量/成本/时延报告 |
 | 7 | 真实数据源和演示 | not_started | 真实 Adapter + Docker 演示 + 面试材料 |
 
 ## 3. Phase 0：需求、架构和项目规范
@@ -273,6 +273,15 @@
 - 一条命令在离线模式生成真实评估报告。
 - 文档报告实际数值、数据集大小、置信限制和失败样本。
 - 不把 fixture 测试通过率包装成泛化准确率。
+
+### 实际验收
+
+- [x] 版本化 `1.0.0` 数据集包含 3 个不同根因的脱敏 Fixture；ground truth 只进入 evaluator，不传入 Graph。
+- [x] 一条 `uv run python -m scripts.evaluate_offline` 命令生成逐样例 JSONL、JSON 汇总和 Markdown 汇总；失败样例保留且汇总计数可追溯。
+- [x] 覆盖服务定位、故障类型、Recall@K、MRR、工具选择/参数、Evidence relevance、引用正确性、根因准确率、轮数、工具次数、wall-clock 时延和 Token；Fake Token 标记 estimated，缺定价时成本为 unavailable。
+- [x] 节点、工具、结构化模型调用具有默认关闭的 OpenTelemetry spans；`observability` extra 为可选 Apache-2.0 依赖。LangSmith 必须显式开启，默认 tracing context 即使外部环境变量为 true 也保持离线。
+- [x] Phase 6 基线真实运行 3/3 完成、0 失败；完整数值、逐样例原始结果和限制记录在 `docs/EVALUATION.md` 与 `artifacts/evaluation/phase6-baseline/`，未声明泛化准确率或性能 benchmark。
+- [x] `uv sync`、`uv lock --check`、Ruff format/check、`mypy src tests scripts`、17 项 Phase 6 定向测试和 165 项全量测试通过；默认测试拒绝网络连接且没有调用付费 API。
 
 ## 10. Phase 7：真实数据源和演示
 
