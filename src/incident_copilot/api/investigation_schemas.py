@@ -8,6 +8,7 @@ from typing import Self
 from pydantic import Field, field_validator, model_validator
 
 from incident_copilot.api.schemas import ApiModel
+from incident_copilot.core.logging import redact_value
 from incident_copilot.domain.common import (
     AwareDatetime,
     Environment,
@@ -104,6 +105,18 @@ class InvestigationResponse(ApiModel):
         replayed: bool = False,
     ) -> "InvestigationResponse":
         """Build one stable response from repository metadata."""
+        report = (
+            IncidentReport.model_validate(redact_value(record.report.model_dump(mode="python")))
+            if record.report is not None
+            else None
+        )
+        review_request = (
+            HumanReviewRequest.model_validate(
+                redact_value(record.review_request.model_dump(mode="python"))
+            )
+            if record.review_request is not None
+            else None
+        )
         return cls(
             investigation_id=record.investigation_id,
             incident_id=record.incident_id,
@@ -111,8 +124,8 @@ class InvestigationResponse(ApiModel):
             run_id=record.run_id,
             status=record.status,
             review_required=record.status is InvestigationStatus.WAITING_REVIEW,
-            review_request=record.review_request,
-            report=record.report,
+            review_request=review_request,
+            report=report,
             error_message=record.error_message,
             created_at=record.created_at,
             updated_at=record.updated_at,

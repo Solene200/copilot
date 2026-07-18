@@ -181,3 +181,18 @@ def test_idempotent_create_and_exhausted_research_budget_conflicts() -> None:
             },
         )
         assert no_budget.status_code == 409
+
+
+def test_stream_and_status_do_not_echo_sensitive_raw_input() -> None:
+    app = create_app(Settings(environment=RuntimeEnvironment.TEST, _env_file=None))
+    payload = request_payload()
+    payload["query"] = "token=do-not-expose payment-service requests timed out"
+
+    with TestClient(app) as client:
+        created = client.post("/api/v1/investigations", json=payload)
+        investigation_id = created.json()["investigation_id"]
+        paused = wait_for_status(client, investigation_id, "waiting_review")
+        streamed = client.get(f"/api/v1/investigations/{investigation_id}/events")
+
+    assert "do-not-expose" not in json.dumps(paused)
+    assert "do-not-expose" not in streamed.text
