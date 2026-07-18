@@ -432,3 +432,89 @@ uv run pytest tests/unit/graph tests/unit/tools/test_registry.py tests/integrati
 2. 保持 Phase 4 的 130 项离线测试与 Mermaid 一致性门禁通过。
 3. 设计稳定的 investigation/thread/run ID、后台生命周期、SSE 事件和幂等 API 契约。
 4. 只实现 API、Streaming、Checkpoint 和 HITL，不提前实现 Phase 6 Evaluation 或 Phase 7 真实数据源。
+
+## Phase 5 — API、Streaming、Checkpoint 和 HITL
+
+### 状态
+
+`completed`（真实 PostgreSQL 跨进程集成验证因本机虚拟化不可用而保留为明确环境缺口）
+
+### 开始前基线
+
+- 完整重读 `AGENTS.md`、PRD、架构、Graph、数据模型、路线图和进度文档，并检查 Git diff。
+- 开始时发现 15 个尚未提交的 Phase 4 严格预算加固文件；先运行锁文件、Ruff、mypy 和全量测试，确认 `130 passed` 后以 `812235b` 独立提交推送，没有混入 Phase 5。
+- Phase 5 的干净基线为 `812235b`，本阶段没有调用真实付费 API，也没有提前实现 Phase 6 Evaluation 或 Phase 7 真实 Provider。
+
+### 完成内容
+
+- 新增严格 `HumanFeedback` / `HumanReviewRequest`；高风险 remediation 经源码条件路由进入 `human_review`，节点调用 LangGraph `interrupt()`，接受后结束、追加调查后回到 refine 并再次暂停。旧 Phase 4 离线脚本仍显式使用无审核图，不破坏原演示入口。
+- `build_investigation_graph` 可注入 `BaseCheckpointSaver` 和审核开关；默认 FastAPI 使用 `InMemorySaver`。可选 `postgres` extra 锁定官方 `langgraph-checkpoint-postgres` 3.1.0 / psycopg 3，并在 lifespan 内打开 `AsyncPostgresSaver`、执行 `setup()`、保持 saver 生命周期。
+- 新增任务仓储与生命周期服务：pending/running/waiting_review/completed/failed 状态、乐观 version、幂等创建、逐调查恢复锁、后台执行、预算校验和失败降级。`investigation_id` / `thread_id` 共享 UUID，每次初始或恢复生成新 `run_id`。
+- 应用可从稳定 thread checkpoint 重建丢失的暂停/完成任务元数据；测试使用同一 saver、新 Graph 和全新任务仓储完成恢复，不依赖原服务实例。
+- 新增版本化安全事件：queued/started/node/tool/evidence/hypothesis/budget/review/report/failure；sequence 和 event ID 单调，Evidence 事件保留 source/time/service/citation。事件与状态响应递归脱敏，不发送原始 checkpoint State。
+- 实现四个 `/api/v1/investigations` 端点。SSE 支持 `Last-Event-ID`、heartbeat、客户端断连停止，并在 waiting_review/completed/failed 静默点关闭当前连接；恢复后客户端可用最后 ID 续传。
+- HTTP 契约覆盖幂等重放、载荷冲突、404、409、422、已有 500 统一异常、无效 cursor、非法反馈、追加调查无预算和重复恢复。
+- 更新当前源码 Mermaid；图只展示真实 Graph 节点/边，checkpoint、后台任务和 SSE 保持为图外应用层。新增 `scripts/run_api_demo.py`，使用标准库 HTTP 客户端对本地 Uvicorn 执行创建→SSE→审核→报告。
+
+### 分步 Git 记录
+
+- `21c0311`：checkpoint-enabled HITL Graph、结构化审核 Schema 及暂停/二次调查测试。
+- `15a95e5`：任务状态、仓储、有序安全事件和后台生命周期服务。
+- `de17847`：创建、状态、SSE、恢复 API 与 HTTP 集成测试。
+- `8e4d6fc`：内存/PostgreSQL checkpointer 装配、可选依赖和跨 Graph 实例恢复。
+- `4c066ad`：稳定 investigation/thread 映射及从 checkpoint 重建任务元数据。
+- `38c95a0`：SSE heartbeat/断连及状态响应敏感输入过滤加固。
+
+### 新增或修改文件
+
+- 领域/Graph：`src/incident_copilot/domain/review.py`、`src/incident_copilot/graph/`。
+- 应用层：`src/incident_copilot/investigations/`、`src/incident_copilot/core/config.py`、`src/incident_copilot/core/exceptions.py`。
+- API：`src/incident_copilot/api/investigation_schemas.py`、`src/incident_copilot/api/routes/investigations.py`、`src/incident_copilot/main.py`。
+- 测试：`tests/unit/api/`、`tests/unit/investigations/`、`tests/unit/domain/test_review.py`、`tests/integration/test_human_review_graph.py`、`test_investigation_service.py`、`test_investigation_api_phase5.py`。
+- 演示/文档：`scripts/run_api_demo.py`、`scripts/render_graph.py`、`docs/GRAPH_CURRENT.md`、`README.md`、`.env.example`、`docs/ROADMAP.md`、`docs/PROGRESS.md`。
+- 依赖：`pyproject.toml`、uv 生成的 `uv.lock`。
+
+### 实际检查结果
+
+| 命令/检查 | 真实结果 |
+| --- | --- |
+| `uv sync` | PASS：解析 65 个包，默认环境检查 60 个已安装包；PostgreSQL extra 未作为默认依赖安装 |
+| `uv lock --check` | PASS：锁文件与项目元数据一致，65 packages |
+| `uv run ruff format --check .` | PASS：88 个 Python 文件已格式化 |
+| `uv run ruff check .` | PASS：All checks passed |
+| `uv run mypy src tests scripts` | PASS：88 个 source files，0 issues |
+| `uv run pytest tests/unit/api tests/unit/investigations tests/unit/domain/test_review.py tests/integration/test_human_review_graph.py tests/integration/test_investigation_service.py tests/integration/test_investigation_api_phase5.py` | PASS：18 passed |
+| `uv run pytest` | PASS：148 passed，0 warning |
+| `uv run python scripts/render_graph.py --check docs/GRAPH_CURRENT.md` | PASS：文档 Mermaid 与 Phase 5 实际编译 Graph 一致 |
+| 独立 Uvicorn `127.0.0.1:18765` + `scripts/run_api_demo.py` | PASS：50 个 SSE 事件；waiting_review→accept→completed；13 条 supporting evidence；初始/恢复 run ID 不同 |
+| PostgreSQL 跨进程集成 | NOT RUN：当前宿主机 Docker Desktop 无虚拟化支持且没有可用 PostgreSQL；未伪造成通过 |
+
+第一次 TCP 尝试使用端口 8765 时命中一个已有/非本次路由服务，创建接口返回 404，因此没有计为通过；改用独占端口 18765、先校验本次进程存活及 OpenAPI 含 Phase 5 路由后，演示真实通过。上述测试耗时和事件数只作为本机固定 fixture 运行记录，不是性能、准确率或扩展性声明。
+
+### 已知问题
+
+- `InMemoryInvestigationRepository` 不持久化幂等键和历史 SSE 事件。服务可从 checkpoint 重建暂停/完成任务及报告，但重建后的旧事件历史不可重放；生产高可用仍需要持久化任务/事件 Repository。
+- 官方 PostgreSQL checkpointer adapter、可选依赖、DSN/extra 错误和 `setup()` 路径已实现，但本机没有真实 PostgreSQL，因此数据库 schema、断线重连和真实跨进程恢复未验证。
+- 后台调查使用应用进程内 `asyncio.Task`，没有分布式队列、worker lease、取消 API 或多实例任务抢占；这些不应被描述成生产任务调度系统。
+- 默认模型、embedding、Provider 和知识索引仍是确定性 fixture/fake；报告内容不代表真实诊断准确率，Phase 5 没有运行 Evaluation。
+- SSE 事件存储当前为进程内无界列表，适合小型演示；生产部署需要事件保留、分页/压缩和慢消费者策略。
+- PostgreSQL DSN 是 `SecretStr` 且不会出现在响应/日志，但真实部署仍应通过 secret manager 注入并配置 TLS、最小权限和连接池。
+
+### 手动验证
+
+```text
+uv sync
+uv run uvicorn incident_copilot.main:app --reload
+```
+
+另开终端运行：
+
+```text
+uv run python scripts/run_api_demo.py
+```
+
+预期脚本输出 `waiting_review` 审核原因、非空 `high_risk_actions`、事件数、不同的 initial/resume run ID，以及最终 `completed`、`probable` 报告和 supporting evidence 数。也可访问 `http://127.0.0.1:8000/docs` 手动检查四个 API。
+
+### 下一阶段建议
+
+只有用户明确要求 Phase 6 后才开始 Evaluation 和 Agent 可观测性。进入前保持 Phase 5 API/事件/报告 Schema 稳定；先设计版本化离线评估样例和可手算 evaluator，不把本阶段 148 项测试通过率、13 条证据或 50 个事件包装成诊断准确率或性能指标。真实 PostgreSQL/任务 Repository 加固仍是独立的生产化缺口，不应借 Phase 6 评估代码掩盖。

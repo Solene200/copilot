@@ -1,4 +1,4 @@
-"""Render Mermaid directly from the currently compiled Phase 4 graph."""
+"""Render Mermaid directly from the currently compiled interactive graph."""
 
 import argparse
 from pathlib import Path

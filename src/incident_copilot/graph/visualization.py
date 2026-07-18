@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from langgraph.checkpoint.memory import InMemorySaver
+
 from incident_copilot.graph.bootstrap import build_offline_investigation_graph
 
 FENCE_START = "```mermaid\n"
@@ -18,5 +20,8 @@ def extract_documented_mermaid(path: Path) -> str:
 
 def current_mermaid() -> str:
     """Return LangGraph's own visualization of the compiled source graph."""
-    graph = build_offline_investigation_graph()
+    graph = build_offline_investigation_graph(
+        checkpointer=InMemorySaver(),
+        require_human_review=True,
+    )
     return graph.get_graph().draw_mermaid().strip()

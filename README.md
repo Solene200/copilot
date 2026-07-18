@@ -1,15 +1,15 @@
 # IncidentCopilot
 
-IncidentCopilot 是一个面向 AI 应用开发岗位面试与作品集展示的多源可观测性故障诊断项目。当前仓库已完成 Phase 4：在 Provider、工具和 RAG 之上，提供有界、可复现的 LangGraph 并行调查循环与带 Evidence ID 引用的最终报告。
+IncidentCopilot 是一个面向 AI 应用开发岗位面试与作品集展示的多源可观测性故障诊断项目。当前仓库已完成 Phase 5：在有界 LangGraph 并行调查循环之上，提供异步任务 API、SSE、checkpoint 与高风险修复人工审核。
 
-当前阶段不包含调查 HTTP API、SSE、checkpoint、人工审核、数据库部署、真实可观测平台或在线模型调用；这些不应从现有 `/health` API 推断为已实现。
+默认路径仍完全离线，不包含真实可观测平台、在线模型调用、自动执行修复或已验证的 PostgreSQL 部署。PostgreSQL checkpointer 是显式可选目标；当前机器因 Docker 虚拟化不可用，未运行真实数据库集成测试。
 
 ## 环境要求
 
 - Python 3.11–3.13
 - [uv](https://docs.astral.sh/uv/)
 
-Docker 不是 Phase 2–4 离线运行与测试的前提。
+Docker 不是默认离线运行与测试的前提。
 
 ## 快速开始
 
@@ -89,6 +89,32 @@ uv run python scripts/render_graph.py --check docs/GRAPH_CURRENT.md
 ```
 
 Fake Model 只验证控制流、结构化边界和可复现演示；假设文本从高相关 Evidence summary 派生，不读取 evaluation ground truth，但其规划配方仍只面向 payment-service 场景，不代表真实模型诊断准确率。报告 disposition、confidence 和估算 Token 也不是 Evaluation 结果。
+
+## Phase 5 API、SSE 与人工审核
+
+启动服务后可使用以下接口：
+
+- `POST /api/v1/investigations`：创建后台调查，支持 `Idempotency-Key`。
+- `GET /api/v1/investigations/{id}`：查询任务、审核请求和报告。
+- `GET /api/v1/investigations/{id}/events`：SSE 事件流，支持 `Last-Event-ID`。
+- `POST /api/v1/investigations/{id}/resume`：提交 `accept` 或带查询的 `request_more_research`。
+
+运行一个针对本地 Uvicorn 的真实 HTTP 演示：
+
+```text
+uv run python scripts/run_api_demo.py
+```
+
+默认 `InMemorySaver` 适合本地演示与测试。生产目标可安装官方 PostgreSQL saver；应用会在 lifespan 中打开连接并执行 saver `setup()`：
+
+```text
+uv sync --extra postgres
+set INCIDENT_COPILOT_CHECKPOINT_BACKEND=postgres
+set INCIDENT_COPILOT_POSTGRES_DSN=postgresql://user:password@localhost:5432/incident_copilot
+uv run uvicorn incident_copilot.main:app
+```
+
+任务元数据仓储在 Phase 5 仍是进程内实现；服务可通过与 `investigation_id` 共享 UUID 的稳定 `thread_id` 从 checkpoint 重建暂停/完成任务，但幂等键和历史 SSE 事件不会随之恢复。因此仅切换 PostgreSQL checkpointer 不等于完整高可用部署，生产环境仍需要持久化 Investigation Repository。API/SSE 只返回公开投影与脱敏事件，不返回原始 Graph State。
 
 ## 质量检查
 

@@ -235,6 +235,17 @@
 - 进程重建后用 thread ID 恢复的集成测试通过。
 - API 不泄露原始 State、秘密或未脱敏证据。
 
+### 实际验收
+
+- [x] 提供 `POST /api/v1/investigations`、`GET /api/v1/investigations/{id}`、`GET /api/v1/investigations/{id}/events`、`POST /api/v1/investigations/{id}/resume`；创建使用后台任务和可选 `Idempotency-Key`，相同请求重放、不同载荷冲突均有 HTTP 测试。
+- [x] `investigation_id` 与 `thread_id` 共享稳定 UUID，每次初始/恢复执行使用不同 `run_id`；Graph 通过 checkpointer 和 `thread_id` 暂停/恢复。新 Graph 与新任务仓储可从同一 saver 重建暂停任务并完成恢复。
+- [x] 报告首个生产变更建议标为 high risk，源码条件路由进入 `human_review` 并调用 `interrupt()`；`Command(resume=...)` 只接受 Pydantic `accept` / `request_more_research`。测试覆盖接受、追加调查后二次暂停、无预算拒绝、非法反馈和重复恢复 409。
+- [x] SSE 使用版本化事件、单调 sequence/event ID、`Last-Event-ID` 重放、heartbeat、断连停止与静默点关闭；事件只映射安全节点/工具/Evidence/Citation 摘要，状态和事件测试验证敏感原始 query 不回显。
+- [x] 默认 `InMemorySaver` 零网络运行；可选依赖锁定官方 `langgraph-checkpoint-postgres` 3.1.0，PostgreSQL backend 在 FastAPI lifespan 内持有 `AsyncPostgresSaver` 并先执行 `setup()`，缺少 DSN/extra 时显式配置失败。
+- [x] 本地真实 TCP 演示完成创建→50 个 SSE 事件→高风险暂停→审核接受→报告，初始与恢复 `run_id` 不同；该次数只描述固定 fixture 演示，不是性能或质量评估。
+- [x] `uv sync`、`uv lock --check`、Ruff、`mypy src tests scripts`、18 项 Phase 5 定向测试、148 项全量测试和源码 Mermaid 一致性检查通过；默认测试没有调用在线模型、在线 embedding、付费 API 或数据库。
+- [ ] 当前宿主机 Docker Desktop 因虚拟化不可用，未运行真实 PostgreSQL 跨进程集成测试；只验证了官方 adapter 装配、schema setup 契约以及共享 saver 下的新 Graph/新仓储恢复，不能把真实数据库项标为通过。
+
 ## 9. Phase 6：Evaluation 和 Agent 可观测性
 
 ### 输入条件
