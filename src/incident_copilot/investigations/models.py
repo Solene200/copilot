@@ -1,4 +1,4 @@
-"""Task metadata and safe streaming event contracts."""
+"""任务元数据和安全流式事件契约。"""
 
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -13,7 +13,7 @@ from incident_copilot.graph.schemas import InvestigationOptions
 
 
 class InvestigationStatus(StrEnum):
-    """Externally observable lifecycle of one investigation task."""
+    """一个调查任务对外可观察的生命周期。"""
 
     PENDING = "pending"
     RUNNING = "running"
@@ -23,7 +23,7 @@ class InvestigationStatus(StrEnum):
 
 
 class EventType(StrEnum):
-    """Versioned event names safe for public SSE consumers."""
+    """可安全提供给公开 SSE 消费者的版本化事件名称。"""
 
     INVESTIGATION_QUEUED = "investigation.queued"
     INVESTIGATION_STARTED = "investigation.started"
@@ -39,7 +39,7 @@ class EventType(StrEnum):
 
 
 class InvestigationRecord(DomainModel):
-    """Application metadata; full graph state remains in the checkpointer."""
+    """应用元数据,完整 Graph State 仍保存在 Checkpointer 中。"""
 
     investigation_id: str = Field(pattern=r"^inv_[a-f0-9]{32}$")
     incident_id: str = Field(pattern=r"^inc_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
@@ -59,7 +59,7 @@ class InvestigationRecord(DomainModel):
 
 
 class InvestigationEvent(DomainModel):
-    """Monotonic, replayable event that never contains raw checkpoint state."""
+    """单调递增且可重放、绝不包含 checkpoint 原始 State 的事件。"""
 
     schema_version: str = "1.0"
     event_id: str = Field(pattern=r"^evt_[a-f0-9]{32}_[0-9]+$")

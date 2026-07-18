@@ -1,4 +1,4 @@
-"""Validated input and output contracts for deterministic offline evaluation."""
+"""确定性离线评估使用的已校验输入输出契约。"""
 
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -18,21 +18,21 @@ from incident_copilot.domain.report import IncidentReport
 
 
 class SampleStatus(StrEnum):
-    """Whether a sample produced a report or retained a runner failure."""
+    """表示样例生成了报告还是保留了 Runner 失败。"""
 
     COMPLETED = "completed"
     FAILED = "failed"
 
 
 class ExpectedToolCall(DomainModel):
-    """Expected tool plus only the argument fields relevant to the ground truth."""
+    """预期工具及其与真实标签相关的参数字段。"""
 
     tool_name: str = Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")
     arguments: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class EvaluationGroundTruth(DomainModel):
-    """Labels withheld from the graph and consumed only after inference."""
+    """不向 Graph 暴露、仅在推理完成后使用的标签。"""
 
     affected_services: tuple[str, ...] = Field(min_length=1, max_length=20)
     failure_type: str = Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")
@@ -65,7 +65,7 @@ class EvaluationGroundTruth(DomainModel):
 
 
 class EvaluationSample(DomainModel):
-    """One reproducible incident invocation and its evaluator-only labels."""
+    """一次可复现的事故调用及其仅供评估器使用的标签。"""
 
     sample_id: str = Field(pattern=r"^eval_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     fixture_path: str = Field(min_length=1, max_length=512)
@@ -89,7 +89,7 @@ class EvaluationSample(DomainModel):
 
 
 class EvaluationDataset(DomainModel):
-    """Immutable versioned collection used for comparable offline runs."""
+    """供离线运行比较使用的不可变版本化集合。"""
 
     schema_version: Literal["1.0"] = "1.0"
     dataset_id: str = Field(pattern=r"^dataset_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
@@ -106,7 +106,7 @@ class EvaluationDataset(DomainModel):
 
 
 class SetMetrics(DomainModel):
-    """Auditable set comparison with explicit counts and empty-set semantics."""
+    """具有明确计数和空集合语义的可审计集合比较。"""
 
     expected_count: int = Field(ge=0)
     actual_count: int = Field(ge=0)
@@ -118,7 +118,7 @@ class SetMetrics(DomainModel):
 
 
 class ToolArgumentMetrics(DomainModel):
-    """Subset argument comparison; unspecified runtime fields are not penalized."""
+    """比较参数子集,不惩罚标签未指定的运行时字段。"""
 
     expected_field_count: int = Field(ge=0)
     matched_field_count: int = Field(ge=0)
@@ -126,7 +126,7 @@ class ToolArgumentMetrics(DomainModel):
 
 
 class RetrievalMetrics(DomainModel):
-    """Ranked retrieval labels and hand-checkable Recall@K/MRR outputs."""
+    """带排名的检索标签和可手工核对的 Recall@K/MRR 输出。"""
 
     top_k: int = Field(ge=1, le=50)
     expected_document_ids: tuple[str, ...]
@@ -136,7 +136,7 @@ class RetrievalMetrics(DomainModel):
 
 
 class CitationMetrics(DomainModel):
-    """Exact citation integrity for every EvidenceRef attached to the report."""
+    """报告中每个 EvidenceRef 的精确引用完整性。"""
 
     checked_evidence_count: int = Field(ge=0)
     correct_citation_count: int = Field(ge=0)
@@ -144,7 +144,7 @@ class CitationMetrics(DomainModel):
 
 
 class ActualToolCall(DomainModel):
-    """Raw completed tool record reconstructed from the executed plan."""
+    """根据已执行计划重建的原始工具完成记录。"""
 
     tool_name: str
     arguments: dict[str, JsonValue]
@@ -153,7 +153,7 @@ class ActualToolCall(DomainModel):
 
 
 class SampleUsage(DomainModel):
-    """Measured graph counters plus explicit token provenance and unavailable cost."""
+    """实际测量的 Graph 计数、明确的 Token 来源和不可用成本。"""
 
     research_rounds: int = Field(ge=0)
     tool_calls: int = Field(ge=0)
@@ -168,7 +168,7 @@ class SampleUsage(DomainModel):
 
 
 class EvaluationSampleResult(DomainModel):
-    """Raw, traceable result retained even when one sample fails."""
+    """即使样例失败也会保留的原始可追踪结果。"""
 
     sample_id: str
     status: SampleStatus
@@ -201,7 +201,7 @@ class EvaluationSampleResult(DomainModel):
 
 
 class AggregateMetrics(DomainModel):
-    """Means over completed samples; optional metrics exclude undefined denominators."""
+    """完成样例的均值,可选指标会排除分母未定义的情况。"""
 
     service_localization_accuracy: float | None = Field(default=None, ge=0.0, le=1.0)
     failure_type_accuracy: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -224,7 +224,7 @@ class AggregateMetrics(DomainModel):
 
 
 class EvaluationSummary(DomainModel):
-    """Aggregate report tied to one dataset version and raw-result artifact."""
+    """与一个数据集版本和原始结果产物关联的聚合报告。"""
 
     schema_version: Literal["1.0"] = "1.0"
     run_id: str = Field(pattern=r"^evalrun_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")

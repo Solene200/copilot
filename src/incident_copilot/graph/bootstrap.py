@@ -1,4 +1,4 @@
-"""Composition roots for fixture-only and mixed-provider investigation graphs."""
+"""纯 Fixture 和混合 Provider 调查 Graph 的组合根。"""
 
 from collections.abc import Callable
 from datetime import datetime
@@ -23,7 +23,7 @@ def build_offline_investigation_graph(
     checkpointer: BaseCheckpointSaver[str] | None = None,
     require_human_review: bool = False,
 ) -> InvestigationGraph:
-    """Build a no-key/no-network investigation graph for tests and demos."""
+    """为测试和演示构造无需密钥与网络的调查 Graph。"""
     fixture = fixture_provider or FixtureProvider.payment_service()
     return build_mixed_investigation_graph(
         metrics_provider=fixture,
@@ -44,7 +44,7 @@ def build_mixed_investigation_graph(
     checkpointer: BaseCheckpointSaver[str] | None = None,
     require_human_review: bool = False,
 ) -> InvestigationGraph:
-    """Build a graph with real metrics and deterministic fallback sources."""
+    """构造使用真实指标和确定性降级数据源的 Graph。"""
     fixture = fixture_provider or FixtureProvider.payment_service()
     retriever, _ = build_fixture_retriever(clock=clock)
     registry = build_tool_registry(

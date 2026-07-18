@@ -1,4 +1,4 @@
-"""Bounded LangGraph investigation workflow."""
+"""有界 LangGraph 调查工作流。"""
 
 from incident_copilot.graph.bootstrap import (
     build_mixed_investigation_graph,

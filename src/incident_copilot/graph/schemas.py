@@ -1,4 +1,4 @@
-"""Validated values exchanged by investigation graph nodes."""
+"""调查 Graph 节点之间交换的已校验值。"""
 
 import hashlib
 import json
@@ -20,7 +20,7 @@ from incident_copilot.domain.review import HumanFeedback
 
 
 def stable_query_key(tool_name: str, arguments: Mapping[str, object]) -> str:
-    """Derive the query identity in trusted code rather than accepting a model claim."""
+    """在可信代码中计算查询标识,而不接受模型提供的标识。"""
     canonical = json.dumps(
         {"tool_name": tool_name, "arguments": arguments},
         sort_keys=True,
@@ -31,7 +31,7 @@ def stable_query_key(tool_name: str, arguments: Mapping[str, object]) -> str:
 
 
 class StepStatus(StrEnum):
-    """Terminal status of one read-only investigation tool step."""
+    """一个只读调查工具步骤的终止状态。"""
 
     COMPLETED = "completed"
     FAILED = "failed"
@@ -39,7 +39,7 @@ class StepStatus(StrEnum):
 
 
 class ErrorCategory(StrEnum):
-    """Stable graph-level error categories safe to expose in reports."""
+    """可以安全暴露在报告中的稳定 Graph 级错误类别。"""
 
     VALIDATION = "validation"
     TIMEOUT = "timeout"
@@ -50,7 +50,7 @@ class ErrorCategory(StrEnum):
 
 
 class StopReason(StrEnum):
-    """Explicit and auditable reasons for ending the research loop."""
+    """明确且可审计的调查循环结束原因。"""
 
     EVIDENCE_SUFFICIENT = "evidence_sufficient"
     MAX_RESEARCH_ROUNDS = "max_research_rounds"
@@ -61,7 +61,7 @@ class StopReason(StrEnum):
 
 
 class InvestigationOptions(DomainModel):
-    """Immutable invocation budgets controlled by application code, never by a model."""
+    """由应用代码控制且模型永远不能修改的不可变调用预算。"""
 
     max_research_rounds: int = Field(default=2, ge=1, le=5)
     max_tool_calls: int = Field(default=14, ge=1, le=100)
@@ -72,7 +72,7 @@ class InvestigationOptions(DomainModel):
 
 
 class ModelTask(StrEnum):
-    """Allow-listed structured model operations used by Phase 4."""
+    """Phase 4 使用的白名单结构化模型操作。"""
 
     PLAN = "plan"
     HYPOTHESES = "hypotheses"
@@ -81,7 +81,7 @@ class ModelTask(StrEnum):
 
 
 class InvestigationStep(DomainModel):
-    """One validated, allow-listed tool request generated for a research round."""
+    """为一轮调查生成的已校验白名单工具请求。"""
 
     step_id: str = Field(pattern=r"^step_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     query_key: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -94,7 +94,7 @@ class InvestigationStep(DomainModel):
 
 
 class InvestigationPlan(DomainModel):
-    """Bounded plan whose steps are revalidated by the Tool Registry."""
+    """步骤会由 Tool Registry 再次校验的有界计划。"""
 
     plan_id: str = Field(pattern=r"^plan_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     round_number: int = Field(ge=1)
@@ -122,7 +122,7 @@ class InvestigationPlan(DomainModel):
 
 
 class StepResult(DomainModel):
-    """Compact terminal record for one tool step without raw evidence payloads."""
+    """不包含原始证据载荷的工具步骤紧凑终止记录。"""
 
     step_id: str = Field(pattern=r"^step_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     query_key: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -152,7 +152,7 @@ class StepResult(DomainModel):
 
 
 class InvestigationError(DomainModel):
-    """Sanitized first-class failure retained in bounded graph state."""
+    """保存在有界 Graph State 中、经过脱敏的一等失败对象。"""
 
     error_id: str = Field(pattern=r"^err_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     category: ErrorCategory
@@ -166,7 +166,7 @@ class InvestigationError(DomainModel):
 
 
 class ModelUsage(DomainModel):
-    """Per-call usage; Fake Model values are explicitly marked as estimated."""
+    """单次调用用量,Fake Model 数值会明确标记为估算值。"""
 
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
@@ -174,14 +174,14 @@ class ModelUsage(DomainModel):
 
 
 class ModelResponse(DomainModel):
-    """Untrusted provider response validated again against a task-specific Schema."""
+    """需要使用任务专属 Schema 再次校验的不可信 Provider 响应。"""
 
     payload: dict[str, JsonValue]
     usage: ModelUsage = Field(default_factory=ModelUsage)
 
 
 class PlanOutput(DomainModel):
-    """Structured model output for initial or refined investigation planning."""
+    """初始或细化调查计划使用的结构化模型输出。"""
 
     objective: str = Field(min_length=1, max_length=1_000)
     steps: tuple[InvestigationStep, ...] = Field(default_factory=tuple, max_length=20)
@@ -189,13 +189,13 @@ class PlanOutput(DomainModel):
 
 
 class HypothesesOutput(DomainModel):
-    """Structured model output containing bounded falsifiable hypotheses."""
+    """包含有界可证伪假设的结构化模型输出。"""
 
     hypotheses: tuple[Hypothesis, ...] = Field(min_length=1, max_length=10)
 
 
 class SufficiencyOutput(DomainModel):
-    """Structured model judgement; code policy still owns the final route."""
+    """结构化模型判断,最终路由仍由代码策略控制。"""
 
     sufficient: bool
     reason: str = Field(min_length=1, max_length=2_000)
@@ -203,7 +203,7 @@ class SufficiencyOutput(DomainModel):
 
 
 class ReportDraftOutput(DomainModel):
-    """Narrative-only report output; code attaches verified Evidence references."""
+    """仅包含叙事的报告输出,由代码附加已验证 Evidence 引用。"""
 
     summary: str = Field(min_length=1, max_length=4_000)
     root_cause: str | None = Field(default=None, max_length=4_000)
@@ -213,7 +213,7 @@ class ReportDraftOutput(DomainModel):
 
 
 class ModelContext(DomainModel):
-    """Bounded evidence packet passed to a model provider."""
+    """传给模型 Provider 的有界证据包。"""
 
     task: ModelTask
     incident_id: str = Field(pattern=r"^inc_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
@@ -234,7 +234,7 @@ class ModelContext(DomainModel):
 
 
 class RouteTarget(StrEnum):
-    """Only destinations the post-judgement route may select."""
+    """判断后路由唯一允许选择的目标。"""
 
     REFINE = "refine_investigation"
     REPORT = "generate_report"

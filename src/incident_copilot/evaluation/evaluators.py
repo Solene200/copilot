@@ -1,4 +1,4 @@
-"""Pure, hand-checkable evaluators with explicit denominator behavior."""
+"""分母行为明确且可以手工核对的纯评估器。"""
 
 import math
 import re
@@ -46,7 +46,7 @@ def _normalized_text(value: str) -> str:
 
 
 def set_metrics(expected: Iterable[ItemT], actual: Iterable[ItemT]) -> SetMetrics:
-    """Compare unique sets; two empty sets are a perfect exact match."""
+    """比较去重集合,两个空集合视为完全匹配。"""
     expected_set = set(expected)
     actual_set = set(actual)
     true_positives = expected_set & actual_set
@@ -72,7 +72,7 @@ def retrieval_metrics(
     *,
     top_k: int,
 ) -> RetrievalMetrics:
-    """Compute document-level Recall@K and MRR after stable rank de-duplication."""
+    """稳定去除排名重复项后计算文档级 Recall@K 和 MRR。"""
     unique_ranked = tuple(dict.fromkeys(ranked_document_ids))
     expected = set(expected_document_ids)
     visible = unique_ranked[:top_k]
@@ -94,7 +94,7 @@ def retrieval_metrics(
 def tool_argument_metrics(
     expected_calls: Sequence[ExpectedToolCall], actual_calls: Sequence[ActualToolCall]
 ) -> ToolArgumentMetrics:
-    """Compare labeled fields against the best same-tool execution in any round."""
+    """把标签字段与任意轮次中匹配度最高的同名工具执行进行比较。"""
     actual_by_name: dict[str, list[dict[str, JsonValue]]] = {}
     for call in actual_calls:
         actual_by_name.setdefault(call.tool_name, []).append(call.arguments)
@@ -122,7 +122,7 @@ def tool_argument_metrics(
 
 
 def classify_failure_type(text: str | None) -> str | None:
-    """Apply a sample-independent transparent taxonomy classifier to report text."""
+    """对报告文本应用不依赖具体样例的透明分类器。"""
     if not text:
         return None
     normalized = _normalized_text(text)
@@ -137,7 +137,7 @@ def classify_failure_type(text: str | None) -> str | None:
 
 
 def root_cause_term_recall(root_cause: str | None, terms: Sequence[str]) -> float:
-    """Measure labeled causal-indicator coverage without an online model judge."""
+    """不使用在线模型裁判,测量带标签因果指标的覆盖率。"""
     if not terms:
         return 1.0
     if not root_cause:
@@ -148,7 +148,7 @@ def root_cause_term_recall(root_cause: str | None, terms: Sequence[str]) -> floa
 
 
 def citation_metrics(report: IncidentReport) -> CitationMetrics:
-    """Verify each attached EvidenceRef resolves to the same exact report citation."""
+    """验证每个 EvidenceRef 都能解析到完全一致的报告引用。"""
     citations = {citation.citation_id: citation for citation in report.citations}
     evidence = (*report.supporting_evidence, *report.contradicting_evidence)
     correct = 0
@@ -194,7 +194,7 @@ def _percentile(values: Sequence[float], percentile: float) -> float | None:
 
 
 def aggregate_metrics(results: Sequence[EvaluationSampleResult]) -> AggregateMetrics:
-    """Aggregate completed samples while keeping failed samples visible in summary counts."""
+    """聚合完成样例,同时让失败样例继续出现在汇总计数中。"""
     completed = [result for result in results if result.status is SampleStatus.COMPLETED]
     usages = [result.usage for result in completed if result.usage is not None]
     total_tokens = sum(usage.total_tokens for usage in usages)
@@ -248,7 +248,7 @@ def aggregate_metrics(results: Sequence[EvaluationSampleResult]) -> AggregateMet
 
 
 def json_argument_value(value: object) -> JsonValue:
-    """Narrow a graph argument after it has already passed Pydantic JSON validation."""
+    """在 Graph 参数通过 Pydantic JSON 校验后收窄其类型。"""
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, list):

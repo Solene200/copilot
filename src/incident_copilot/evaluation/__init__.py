@@ -1,4 +1,4 @@
-"""Offline, ground-truth-isolated evaluation for IncidentCopilot."""
+"""与真实标签隔离的 IncidentCopilot 离线评估。"""
 
 from incident_copilot.evaluation.dataset import load_evaluation_dataset
 from incident_copilot.evaluation.runner import OfflineEvaluationRunner

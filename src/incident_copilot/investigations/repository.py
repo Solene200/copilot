@@ -1,4 +1,4 @@
-"""Repository port and deterministic in-memory Phase 5 adapter."""
+"""Repository 端口和确定性 Phase 5 内存 Adapter。"""
 
 import asyncio
 from typing import Protocol
@@ -8,7 +8,7 @@ from incident_copilot.investigations.models import InvestigationEvent, Investiga
 
 
 class InvestigationRepository(Protocol):
-    """Persistence contract for task metadata and its append-only event log."""
+    """任务元数据及其仅追加事件日志的持久化契约。"""
 
     async def create(self, record: InvestigationRecord) -> tuple[InvestigationRecord, bool]: ...
 
@@ -40,7 +40,7 @@ class InvestigationRepository(Protocol):
 
 
 class InMemoryInvestigationRepository:
-    """Concurrency-safe adapter used by local development and deterministic tests."""
+    """本地开发和确定性测试使用的并发安全 Adapter。"""
 
     def __init__(self) -> None:
         self._records: dict[str, InvestigationRecord] = {}
