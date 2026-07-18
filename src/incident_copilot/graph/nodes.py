@@ -1,6 +1,6 @@
-"""Investigation graph node implementations with explicit degradation paths.
+"""带有明确降级路径的调查 Graph 节点实现。
 
-中文教学说明: 本模块承载调查 Graph 的节点业务。每个节点读取 ``InvestigationState`` 的
+本模块承载调查 Graph 的节点业务。每个节点读取 ``InvestigationState`` 的
 有限字段并返回最小增量; reducer 再合并并行更新。工具和模型失败不会被吞掉, 而会转换为
 ``InvestigationError`` 并在可行时使用确定性降级路径继续生成诚实报告。
 """
@@ -61,13 +61,13 @@ Clock = Callable[[], datetime]
 
 
 def utc_now() -> datetime:
-    """Return a timezone-aware UTC timestamp for production composition."""
+    """返回带时区的 UTC 时间,供生产装配使用。"""
     return datetime.now(UTC)
 
 
 @dataclass(frozen=True, slots=True)
 class StructuredCall(Generic[OutputT]):
-    """Validated model value plus reducer-safe per-node deltas."""
+    """保存校验后的模型值和可由 Reducer 安全合并的节点增量。"""
 
     value: OutputT | None
     call_count: int
@@ -77,9 +77,9 @@ class StructuredCall(Generic[OutputT]):
 
 
 class InvestigationNodes:
-    """Dependency-injected, bounded node set used by the compiled graph.
+    """供编译后 Graph 使用的依赖注入式有界节点集合。
 
-    中文: ToolRegistry、ModelProvider 和 Clock 均从外部注入。节点不自行读取配置文件、
+    ToolRegistry、ModelProvider 和 Clock 均从外部注入。节点不自行读取配置文件、
     Fixture 或网络, 因此同一套控制流可以切换离线和真实 Adapter。
     """
 
@@ -97,7 +97,7 @@ class InvestigationNodes:
 
     @trace_async("incident_copilot.node.parse_incident", component="node")
     async def parse_incident(self, state: InvestigationState) -> InvestigationState:
-        """Accept the already-domain-validated incident at the graph boundary.
+        """在 Graph 边界接收已经过领域校验的事故信息。
 
         State 读取: ``incident.services``、``deadline_at``。
         State 写入: ``deadline_exceeded``; 已超时时额外写 ``stop_reason``。
@@ -112,7 +112,7 @@ class InvestigationNodes:
 
     @trace_async("incident_copilot.node.build_investigation_plan", component="node")
     async def build_investigation_plan(self, state: InvestigationState) -> InvestigationState:
-        """Generate the first bounded plan through a structured output Schema.
+        """通过结构化输出 Schema 生成第一轮有界调查计划。
 
         State 读取: incident、research_round、已完成查询和模型/deadline 预算。
         State 写入: investigation_plan、pending_steps、模型计数/usage/errors 及停止字段。
@@ -121,7 +121,7 @@ class InvestigationNodes:
 
     @trace_async("incident_copilot.node.refine_investigation", component="node")
     async def refine_investigation(self, state: InvestigationState) -> InvestigationState:
-        """Increment the single-writer round and create only incremental queries.
+        """由单一写入者递增研究轮次,并且只创建增量查询。
 
         State 读取: 上轮证据缺口、human_feedback、completed_steps、research_round 和预算。
         State 写入: 新 plan/pending_steps、``research_round + 1`` 及模型调用增量。
@@ -134,7 +134,7 @@ class InvestigationNodes:
     def human_review(
         self, state: InvestigationState
     ) -> Command[Literal["refine_investigation", "__end__"]]:
-        """Pause before a high-risk recommendation can become a confirmed report.
+        """在高风险建议进入确认报告前暂停调查。
 
         State 读取: ``final_report.remediation_steps``。
         State 写入: 接受时写 human_feedback/review_completed 并结束; 追加研究时还会重置
@@ -151,10 +151,10 @@ class InvestigationNodes:
             reason="High-risk remediation requires explicit human confirmation.",
             high_risk_actions=high_risk_actions,
         )
-        # 中文: interrupt 会把可序列化请求写入 checkpoint 并暂停当前 thread。
-        # 恢复时节点从头重放, 因此 interrupt 前不能执行非幂等外部副作用。
+        # interrupt 会把可序列化请求写入 checkpoint 并暂停当前 thread。
+        # 恢复时节点从头重放,因此 interrupt 前不能执行非幂等外部副作用。
         raw_feedback = interrupt(request.model_dump(mode="json"))
-        # 中文: 人工输入同样是不可信边界, 必须重新通过 Pydantic 校验。
+        # 人工输入同样是不可信边界,必须重新通过 Pydantic 校验。
         feedback = HumanFeedback.model_validate(raw_feedback)
         if feedback.action is ReviewAction.ACCEPT:
             return Command(
@@ -173,7 +173,7 @@ class InvestigationNodes:
 
     @trace_async("incident_copilot.node.collect_evidence", component="node")
     async def collect_evidence(self, state: InvestigationState) -> InvestigationState:
-        """Execute one Send-scoped tool step and convert failures into state data.
+        """执行一个由 Send 限定范围的工具步骤,并把失败转换成 State 数据。
 
         State 读取: incident、current_step、deadline_at。
         State 写入: completed_steps; 成功时写 evidence/tool success 增量, 失败时写 errors/
@@ -187,7 +187,7 @@ class InvestigationNodes:
             remaining_tool_calls=1,
         )
         try:
-            # 中文: Registry 统一负责参数 Schema、allow-list、timeout、retry 和输出边界。
+            # Registry 统一负责参数 Schema、白名单、超时、重试和输出边界。
             result = await self._registry.execute(step.tool_name, step.arguments, context)
         except ToolError as exc:
             completed_at = self._clock()
@@ -233,7 +233,7 @@ class InvestigationNodes:
 
     @trace_async("incident_copilot.node.aggregate_evidence", component="node")
     async def aggregate_evidence(self, state: InvestigationState) -> InvestigationState:
-        """Mark hard stops after all branches in the current batch reach the barrier.
+        """当前批次的所有分支到达屏障后,标记确定性的硬停止原因。
 
         State 读取: deadline、工具/模型/Token 预算和 reducer 已汇合的计数。
         State 写入: ``deadline_exceeded``; 命中硬边界时写 ``stop_reason``。
@@ -249,7 +249,7 @@ class InvestigationNodes:
 
     @trace_async("incident_copilot.node.generate_hypotheses", component="node")
     async def generate_hypotheses(self, state: InvestigationState) -> InvestigationState:
-        """Generate Schema-validated hypotheses or use the deterministic fallback.
+        """生成通过 Schema 校验的假设,失败时使用确定性降级结果。
 
         State 读取: incident、evidence 摘要、research_round、历史错误和模型预算。
         State 写入: hypotheses、model_call_count、model_usage、errors 和可选 stop_reason。
@@ -267,7 +267,7 @@ class InvestigationNodes:
 
     @trace_async("incident_copilot.node.verify_hypotheses", component="node")
     async def verify_hypotheses(self, state: InvestigationState) -> InvestigationState:
-        """Enforce evidence foreign keys and confidence policy outside the model.
+        """在模型之外强制校验证据外键和置信度策略。
 
         State 读取: evidence、hypotheses。
         State 写入: 过滤无效 Evidence ID 并按独立来源数校准后的 hypotheses。
@@ -309,7 +309,7 @@ class InvestigationNodes:
 
     @trace_async("incident_copilot.node.judge_evidence", component="node")
     async def judge_evidence(self, state: InvestigationState) -> InvestigationState:
-        """Combine structured judgement with deterministic sufficiency and stop rules.
+        """结合结构化模型判断、确定性充分性条件和停止规则。
 
         State 读取: evidence 来源覆盖、verified hypotheses、轮次和全部预算。
         State 写入: evidence_sufficient、sufficiency_reason、next queries、deadline、模型
@@ -352,7 +352,7 @@ class InvestigationNodes:
 
     @trace_async("incident_copilot.node.generate_report", component="node")
     async def generate_report(self, state: InvestigationState) -> InvestigationState:
-        """Build an honest domain report and attach only verified Evidence IDs.
+        """构造诚实的领域报告,并且只附加已验证的 Evidence ID。
 
         State 读取: incident、evidence、hypotheses、errors、预算计数、stop_reason 和时间。
         State 写入: final_report 及本次模型调用增量。报告引用只能从 State 中已经存在的
@@ -381,7 +381,7 @@ class InvestigationNodes:
                 item.citation.citation_id: item.citation for item in (*supporting, *contradicting)
             }.values()
         )
-        # 中文: disposition 由可信停止原因和真实 supporting evidence 共同决定。
+        # disposition 由可信停止原因和真实 supporting evidence 共同决定。
         timeline = self._timeline((*supporting, *contradicting))
         stop_reason = state.get("stop_reason") or StopReason.MAX_RESEARCH_ROUNDS
         disposition = (
@@ -481,7 +481,7 @@ class InvestigationNodes:
             if query_key in completed_queries or query_key in seen_queries:
                 continue
             seen_queries.add(query_key)
-            # 中文: 不信任模型提供的 step_id/query_key/round, 统一根据规范参数重建。
+            # 不信任模型提供的 step_id/query_key/round,统一根据规范参数重建。
             normalized_steps.append(
                 InvestigationStep.model_validate(
                     {
@@ -553,7 +553,7 @@ class InvestigationNodes:
         errors: list[InvestigationError] = []
         usage = ModelUsage()
         for attempt in range(1, max_attempts + 1):
-            # 中文: 第二次结构修复尝试前再次检查 Token 预算, 避免重试越界。
+            # 第二次结构修复尝试前再次检查 Token 预算,避免重试越界。
             projected_retry_tokens = (
                 prior_usage.input_tokens
                 + prior_usage.output_tokens
@@ -588,7 +588,7 @@ class InvestigationNodes:
                 break
             call_count += 1
             try:
-                # 中文: 总调查 deadline 同时充当本次模型调用的最大剩余 timeout。
+                # 总调查 deadline 同时充当本次模型调用的最大剩余 timeout。
                 response = await asyncio.wait_for(
                     self._model.complete(context), timeout=remaining_seconds
                 )

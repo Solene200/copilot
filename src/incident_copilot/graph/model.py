@@ -1,6 +1,6 @@
-"""Structured model port and deterministic offline implementation.
+"""结构化模型端口和确定性离线实现。
 
-中文教学说明: Graph 只依赖 ``ModelProvider`` 协议, 不依赖具体模型 SDK。模型返回的
+Graph 只依赖 ``ModelProvider`` 协议,不依赖具体模型 SDK。模型返回的
 payload 被视为不可信 JSON, 必须由 ``nodes.py`` 使用任务对应的 Pydantic Schema 校验。
 ``FakeModelProvider`` 是无网络、可复现的教学与测试实现, 不代表真实 LLM 诊断能力。
 """
@@ -28,14 +28,14 @@ from incident_copilot.graph.schemas import (
 
 
 class ModelProvider(Protocol):
-    """Provider-neutral boundary returning untrusted JSON-like structured output.
+    """返回不可信 JSON-like 结构化输出的厂商无关边界。
 
-    中文: 端口只允许一个 ``complete`` 操作。任务类型、裁剪后的证据和研究轮次通过
+    端口只允许一个 ``complete`` 操作。任务类型、裁剪后的证据和研究轮次通过
     ``ModelContext`` 传入, 厂商客户端和 API Key 不会泄漏到 Graph 节点。
     """
 
     async def complete(self, context: ModelContext) -> ModelResponse:
-        """Complete exactly one allow-listed structured task."""
+        """执行一个白名单内的结构化任务。"""
         ...
 
 
@@ -63,9 +63,9 @@ def _step(
 
 
 class FakeModelProvider:
-    """Deterministic, evidence-driven model substitute with no network access.
+    """无网络访问、由证据驱动的确定性模型替代实现。
 
-    中文: Fake 根据当前上下文生成结构化计划、假设、充分性和报告草稿。它不读取 Fixture
+    Fake 根据当前上下文生成结构化计划、假设、充分性和报告草稿。它不读取 Fixture
     ground truth, 也不会硬编码每个评估样例的最终答案。
     """
 
@@ -75,9 +75,9 @@ class FakeModelProvider:
         self._minimum_research_rounds = minimum_research_rounds
 
     async def complete(self, context: ModelContext) -> ModelResponse:
-        """Produce task-specific Pydantic output serialized through JSON mode.
+        """生成任务对应的 Pydantic 输出,并通过 JSON 模式序列化。
 
-        中文: 按 allow-listed ModelTask 分派到确定性函数, 再序列化为 JSON-like payload。
+        按白名单内的 ModelTask 分派到确定性函数,再序列化为 JSON-like payload。
         Usage 是基于字符数的估算值, 所以必须设置 ``estimated=True``。
         """
         output: PlanOutput | HypothesesOutput | SufficiencyOutput | ReportDraftOutput
@@ -261,9 +261,9 @@ class FakeModelProvider:
     def _follow_up_specs(
         context: ModelContext,
     ) -> tuple[tuple[str, SourceType, str, dict[str, object], int], ...]:
-        """Turn bounded provider-neutral follow-up intent into offline demo steps.
+        """把有界且厂商无关的后续调查意图转换为离线演示步骤。
 
-        中文: 将 judge 或人工审核给出的 VerificationQuery 转为已有工具 Schema。这里仍受
+        将 judge 或人工审核给出的 VerificationQuery 转为已有工具 Schema。这里仍受
         工具类型和最多 20 个步骤限制, 人工反馈不能引入任意执行能力。
         """
         feedback = context.human_feedback

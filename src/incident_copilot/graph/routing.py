@@ -1,6 +1,6 @@
-"""Pure, exhaustively tested investigation loop routing policy.
+"""纯函数实现且经过完整分支测试的调查循环路由策略。
 
-中文教学说明: 路由函数只读取 State 并返回预声明节点名, 不访问网络也不调用模型。
+路由函数只读取 State 并返回预声明节点名,不访问网络也不调用模型。
 调查循环的终止权因此掌握在确定性代码中。优先级是 deadline 和硬预算、证据充分、
 最大研究轮数, 最后才允许进入下一轮 refine。
 """
@@ -15,16 +15,16 @@ from incident_copilot.graph.state import InvestigationState
 
 @dataclass(frozen=True, slots=True)
 class RouteDecision:
-    """A route target coupled to its auditable reason when research stops."""
+    """保存路由目标以及调查停止时可审计的停止原因。"""
 
     target: RouteTarget
     stop_reason: StopReason | None
 
 
 def budget_stop_reason(state: InvestigationState) -> StopReason | None:
-    """Return the highest-priority hard budget stop, independent of model judgement.
+    """返回最高优先级的硬预算停止原因,不依赖模型判断。
 
-    中文: 读取 stop_reason、deadline、工具/模型计数和 Token usage; 不写 State。返回首个
+    读取 stop_reason、deadline、工具/模型计数和 Token usage;不写 State。返回首个
     命中的硬停止原因, 让所有入口复用相同预算政策。
     """
     existing = state.get("stop_reason")
@@ -50,9 +50,9 @@ def budget_stop_reason(state: InvestigationState) -> StopReason | None:
 
 
 def decide_after_judge(state: InvestigationState) -> RouteDecision:
-    """Apply non-model stop rules in fixed priority order.
+    """按照固定优先级应用非模型停止规则。
 
-    中文: 读取预算、evidence_sufficient 和研究轮次; 不写 State。只有全部边界允许且证据
+    读取预算、evidence_sufficient 和研究轮次;不写 State。只有全部边界允许且证据
     仍不足时才返回 REFINE, 从而保证调查循环有明确上限。
     """
     budget_reason = budget_stop_reason(state)
@@ -68,9 +68,9 @@ def decide_after_judge(state: InvestigationState) -> RouteDecision:
 def route_after_parse(
     state: InvestigationState,
 ) -> Literal["build_investigation_plan", "generate_report"]:
-    """Skip every external call when the invocation is already out of time.
+    """请求已经超时时跳过全部外部调用。
 
-    中文: 读取 deadline 相关字段; 不写 State。已超时请求直接生成受限报告。
+    读取 deadline 相关字段;不写 State。已超时请求直接生成受限报告。
     """
     if budget_stop_reason(state) is StopReason.DEADLINE_EXCEEDED:
         return "generate_report"
@@ -80,9 +80,9 @@ def route_after_parse(
 def route_after_judge(
     state: InvestigationState,
 ) -> Literal["refine_investigation", "generate_report"]:
-    """Return only a predeclared graph node name.
+    """只返回预先声明的 Graph 节点名称。
 
-    中文: 读取 judge 后的充分性、轮次和预算; 不写 State。模型不能通过自由文本选择路由。
+    读取 judge 后的充分性、轮次和预算;不写 State。模型不能通过自由文本选择路由。
     """
     if decide_after_judge(state).target is RouteTarget.REFINE:
         return "refine_investigation"
@@ -90,9 +90,9 @@ def route_after_judge(
 
 
 def route_after_report(state: InvestigationState) -> Literal["human_review", "__end__"]:
-    """Require review only when the generated report contains high-risk actions.
+    """仅当报告包含高风险操作时要求人工审核。
 
-    中文: 只读取 final_report.remediation_steps; 不写 State。high/critical 建议进入真实
+    只读取 final_report.remediation_steps;不写 State。high/critical 建议进入真实
     ``interrupt`` 节点, 低风险报告可直接结束。
     """
     report = state["final_report"]
