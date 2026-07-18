@@ -42,7 +42,7 @@ return InvestigationResponse.from_record(record, replayed=not created)
 | 输入来源 | HTTP JSON、Header 和 `request.app.state` 中的 Service |
 | 输出去向 | HTTP 202、Location Header、`InvestigationResponse` |
 | State 变化 | API 不直接改 State；Service 后台调用 `create_initial_state` |
-| 下一节点 | Service 首次执行 Graph 后，从 `START` 进入 `normalize_input` |
+| 下一节点 | Service 首次执行 Graph 后，从 `START` 进入 `parse_incident` |
 | 后端类比 | Controller 接受 DTO，再调用 Application Service |
 | 修改风险 | 改成同步等待会占用长连接并混淆 202 与完成语义 |
 
