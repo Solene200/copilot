@@ -1,4 +1,9 @@
-"""Structured model port and deterministic offline implementation."""
+"""Structured model port and deterministic offline implementation.
+
+中文教学说明: Graph 只依赖 ``ModelProvider`` 协议, 不依赖具体模型 SDK。模型返回的
+payload 被视为不可信 JSON, 必须由 ``nodes.py`` 使用任务对应的 Pydantic Schema 校验。
+``FakeModelProvider`` 是无网络、可复现的教学与测试实现, 不代表真实 LLM 诊断能力。
+"""
 
 import hashlib
 from datetime import timedelta
@@ -23,7 +28,11 @@ from incident_copilot.graph.schemas import (
 
 
 class ModelProvider(Protocol):
-    """Provider-neutral boundary returning untrusted JSON-like structured output."""
+    """Provider-neutral boundary returning untrusted JSON-like structured output.
+
+    中文: 端口只允许一个 ``complete`` 操作。任务类型、裁剪后的证据和研究轮次通过
+    ``ModelContext`` 传入, 厂商客户端和 API Key 不会泄漏到 Graph 节点。
+    """
 
     async def complete(self, context: ModelContext) -> ModelResponse:
         """Complete exactly one allow-listed structured task."""
@@ -54,7 +63,11 @@ def _step(
 
 
 class FakeModelProvider:
-    """Deterministic, evidence-driven model substitute with no network access."""
+    """Deterministic, evidence-driven model substitute with no network access.
+
+    中文: Fake 根据当前上下文生成结构化计划、假设、充分性和报告草稿。它不读取 Fixture
+    ground truth, 也不会硬编码每个评估样例的最终答案。
+    """
 
     def __init__(self, *, minimum_research_rounds: int = 1) -> None:
         if minimum_research_rounds < 1:
@@ -62,7 +75,11 @@ class FakeModelProvider:
         self._minimum_research_rounds = minimum_research_rounds
 
     async def complete(self, context: ModelContext) -> ModelResponse:
-        """Produce task-specific Pydantic output serialized through JSON mode."""
+        """Produce task-specific Pydantic output serialized through JSON mode.
+
+        中文: 按 allow-listed ModelTask 分派到确定性函数, 再序列化为 JSON-like payload。
+        Usage 是基于字符数的估算值, 所以必须设置 ``estimated=True``。
+        """
         output: PlanOutput | HypothesesOutput | SufficiencyOutput | ReportDraftOutput
         if context.task is ModelTask.PLAN:
             output = self._plan(context)
@@ -85,6 +102,7 @@ class FakeModelProvider:
         )
 
     def _plan(self, context: ModelContext) -> PlanOutput:
+        """根据研究轮次和上一轮缺口生成有界只读工具步骤。"""
         service = context.service
         start = context.start_time
         end = context.end_time
@@ -243,7 +261,11 @@ class FakeModelProvider:
     def _follow_up_specs(
         context: ModelContext,
     ) -> tuple[tuple[str, SourceType, str, dict[str, object], int], ...]:
-        """Turn bounded provider-neutral follow-up intent into offline demo steps."""
+        """Turn bounded provider-neutral follow-up intent into offline demo steps.
+
+        中文: 将 judge 或人工审核给出的 VerificationQuery 转为已有工具 Schema。这里仍受
+        工具类型和最多 20 个步骤限制, 人工反馈不能引入任意执行能力。
+        """
         feedback = context.human_feedback
         queries = (
             feedback.requested_queries
@@ -335,6 +357,7 @@ class FakeModelProvider:
         return tuple(specs)
 
     def _hypotheses(self, context: ModelContext) -> HypothesesOutput:
+        """只使用当前高相关证据摘要构造可验证假设和 Evidence ID 外键。"""
         relevant: list[dict[str, JsonValue]] = []
         for item in context.evidence_summaries:
             score = item.get("relevance_score", 0.0)
@@ -375,6 +398,7 @@ class FakeModelProvider:
         return HypothesesOutput(hypotheses=(hypothesis,))
 
     def _judge(self, context: ModelContext) -> SufficiencyOutput:
+        """根据来源覆盖、研究轮次和假设存在性产生结构化充分性建议。"""
         source_types = {str(item["source_type"]) for item in context.evidence_summaries}
         enough_sources = len(source_types) >= 2
         enough_rounds = context.research_round >= self._minimum_research_rounds
@@ -400,6 +424,7 @@ class FakeModelProvider:
 
     @staticmethod
     def _report(context: ModelContext) -> ReportDraftOutput:
+        """生成叙事草稿; 最终引用、风险和 disposition 仍由可信节点代码决定。"""
         root_cause = (
             context.hypotheses[0].description
             if context.hypotheses

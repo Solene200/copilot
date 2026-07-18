@@ -1,4 +1,9 @@
-"""LangGraph builder and Send-based dynamic evidence dispatch."""
+"""LangGraph builder and Send-based dynamic evidence dispatch.
+
+中文教学说明: 本模块把节点、边、动态并行分发和可选 Checkpointer 组装成可执行 Graph。
+它只描述控制流, 节点业务在 ``nodes.py``, 停止策略在 ``routing.py``, 合并语义在
+``state.py``。当前并行模型是多个 ``Send`` 指向同一个通用 ``collect_evidence`` 节点。
+"""
 
 from collections.abc import Callable, Hashable
 from datetime import datetime, timedelta
@@ -28,7 +33,11 @@ def create_initial_state(
     options: InvestigationOptions | None = None,
     clock: Callable[[], datetime] = utc_now,
 ) -> InvestigationState:
-    """Create one fully bounded invocation state from validated application input."""
+    """Create one fully bounded invocation state from validated application input.
+
+    中文: 写入 incident、空集合、研究轮次、四类预算和总 deadline。后续节点只能通过
+    最小增量更新 State, 不能从模型输出覆盖这些策略字段。
+    """
     if not incident.services:
         raise ValueError("investigation requires at least one service")
     policy = options or InvestigationOptions()
@@ -63,7 +72,11 @@ def create_initial_state(
 def dispatch_evidence_collection(
     state: InvestigationState,
 ) -> list[Send] | Literal["aggregate_evidence", "generate_report"]:
-    """Reserve budget before fan-out and send minimal per-step state in parallel."""
+    """Reserve budget before fan-out and send minimal per-step state in parallel.
+
+    中文: 读取 stop_reason、pending/completed steps 和工具预算。返回 ``Send`` 列表时不
+    直接写 State; LangGraph 会在同一 superstep 并行调度这些分支。
+    """
     if state.get("stop_reason") is not None:
         return "generate_report"
     return _dispatch_batch(state, empty_target="aggregate_evidence")
@@ -72,7 +85,11 @@ def dispatch_evidence_collection(
 def dispatch_after_aggregate(
     state: InvestigationState,
 ) -> list[Send] | Literal["generate_hypotheses", "generate_report"]:
-    """Run another bounded batch or leave collection only after the plan is drained."""
+    """Run another bounded batch or leave collection only after the plan is drained.
+
+    中文: aggregate 是每批并行任务的汇合屏障。若并发上限导致仍有未执行步骤, 再发送
+    一批; 只有计划耗尽后才进入假设生成。
+    """
     if state.get("stop_reason") is not None:
         return "generate_report"
     return _dispatch_batch(state, empty_target="generate_hypotheses")
@@ -99,7 +116,10 @@ def _dispatch_batch(
     *,
     empty_target: Literal["aggregate_evidence", "generate_hypotheses"],
 ) -> list[Send] | Literal["aggregate_evidence", "generate_hypotheses"]:
+    """按剩余工具预算和并发上限选择下一批未执行查询。"""
+    # 中文: 使用已完成查询键过滤重放, 防止同一工具参数跨批次重复执行。
     remaining = max(0, state["max_tool_calls"] - state.get("tool_call_count", 0))
+    # 中文: 在 fan-out 前计算批次大小, 避免并行分支共同越过调查级工具预算。
     limit = min(remaining, state["max_parallel_tools"])
     completed_queries = {item.query_key for item in state.get("completed_steps", ())}
     candidates = sorted(
@@ -113,6 +133,7 @@ def _dispatch_batch(
     selected = candidates[:limit]
     if not selected:
         return empty_target
+    # 中文: 每个 Send 只携带单步执行所需字段, 不复制完整证据和假设历史。
     return [
         Send(
             "collect_evidence",
@@ -134,9 +155,15 @@ def build_investigation_graph(
     checkpointer: BaseCheckpointSaver[str] | None = None,
     require_human_review: bool = False,
 ) -> InvestigationGraph:
-    """Compile the workflow, optionally adding durable human review semantics."""
+    """Compile the workflow, optionally adding durable human review semantics.
+
+    中文: 注册节点和真实边, 并把纯路由函数绑定为 conditional edges。启用人工审核时
+    ``human_review`` 可以 interrupt; Graph 必须配合 Checkpointer 和稳定 thread_id 才能
+    跨调用恢复。
+    """
     nodes = InvestigationNodes(registry=registry, model=model, clock=clock)
     builder = StateGraph(InvestigationState)
+    # 中文: 节点名称也是 streaming、Mermaid 和测试使用的稳定控制流标识。
     builder.add_node("parse_incident", nodes.parse_incident)
     builder.add_node("build_investigation_plan", nodes.build_investigation_plan)
     builder.add_node("collect_evidence", nodes.collect_evidence)
@@ -173,6 +200,7 @@ def build_investigation_graph(
         path_map=dispatch_targets,
     )
     builder.add_edge("collect_evidence", "aggregate_evidence")
+    # 中文: 所有并行 collect 分支在 aggregate 汇合, reducer 先合并各分支 State 增量。
     builder.add_conditional_edges(
         "aggregate_evidence",
         dispatch_after_aggregate,
@@ -199,6 +227,7 @@ def build_investigation_graph(
         path_map=dispatch_targets,
     )
     if require_human_review:
+        # 中文: 是否需要审核由报告风险字段决定, 不是让模型返回任意节点名称。
         builder.add_conditional_edges(
             "generate_report",
             route_after_report,
@@ -206,6 +235,7 @@ def build_investigation_graph(
         )
     else:
         builder.add_edge("generate_report", END)
+    # 中文: Checkpointer 在 compile 时注入; 具体 thread_id 在每次 invoke 的 config 中传入。
     return builder.compile(
         checkpointer=checkpointer,
         name=("incident-copilot-phase-5" if require_human_review else "incident-copilot-phase-4"),

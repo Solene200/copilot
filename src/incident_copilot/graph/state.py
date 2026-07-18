@@ -1,4 +1,10 @@
-"""LangGraph state channels and deterministic parallel reducers."""
+"""LangGraph state channels and deterministic parallel reducers.
+
+中文教学说明: State 是节点之间传递的有界数据契约。普通字段采用覆盖语义;
+``Annotated`` 字段绑定 reducer, 用于合并同一 superstep 中多个 ``Send`` 分支的增量。
+Reducer 必须尽量满足交换律、结合律和幂等性, 否则并行完成顺序或 checkpoint 重放会
+改变最终结果。
+"""
 
 import json
 from collections.abc import Callable, Sequence
@@ -42,6 +48,11 @@ def _merge_bounded_by_id(
     rank: Callable[[ItemT], tuple[object, ...]],
     limit: int,
 ) -> tuple[ItemT, ...]:
+    """按稳定 ID 合并模型, 解决冲突后执行确定性排序和上限裁剪。
+
+    同一个 ID 若出现不同载荷, 使用 rank 和规范 JSON 选择固定胜者。这样 ``left/right``
+    调换顺序时仍得到相同结果, 对并行 reducer 和 checkpoint 重放非常重要。
+    """
     merged: dict[str, ItemT] = {}
     for item in (*left, *right):
         item_id = identity(item)
@@ -62,7 +73,11 @@ def _merge_bounded_by_id(
 def merge_evidence(
     left: Sequence[EvidenceRef], right: Sequence[EvidenceRef]
 ) -> tuple[EvidenceRef, ...]:
-    """Union evidence by ID and retain a deterministic global top 100."""
+    """Union evidence by ID and retain a deterministic global top 100.
+
+    中文: 读取两个分支的 EvidenceRef 增量, 按 evidence_id 去重并优先保留高相关、高可靠
+    证据。State 只保存轻量引用, 不保存完整原始 payload。
+    """
     return _merge_bounded_by_id(
         left,
         right,
@@ -75,7 +90,10 @@ def merge_evidence(
 def merge_step_results(
     left: Sequence[StepResult], right: Sequence[StepResult]
 ) -> tuple[StepResult, ...]:
-    """Make replayed step completion idempotent and ordering independent."""
+    """Make replayed step completion idempotent and ordering independent.
+
+    中文: ``step_id`` 是幂等键。节点恢复或重复产生同一结果时不会重复累计执行记录。
+    """
     return _merge_bounded_by_id(
         left,
         right,
@@ -88,7 +106,10 @@ def merge_step_results(
 def merge_errors(
     left: Sequence[InvestigationError], right: Sequence[InvestigationError]
 ) -> tuple[InvestigationError, ...]:
-    """Retain a deterministic bounded set of sanitized failures."""
+    """Retain a deterministic bounded set of sanitized failures.
+
+    中文: 错误也是调查输出的一部分, 但必须脱敏、去重并限制数量。
+    """
     return _merge_bounded_by_id(
         left,
         right,
@@ -99,12 +120,19 @@ def merge_errors(
 
 
 def add_count(left: int, right: int) -> int:
-    """Combine per-branch counter deltas without read-modify-write races."""
+    """Combine per-branch counter deltas without read-modify-write races.
+
+    中文: 并行节点只返回本分支增量 ``1``, reducer 负责求和。节点不能读取旧总数再写回,
+    否则两个并行分支可能互相覆盖。
+    """
     return left + right
 
 
 def add_usage(left: ModelUsage, right: ModelUsage) -> ModelUsage:
-    """Combine model usage deltas while preserving estimated provenance."""
+    """Combine model usage deltas while preserving estimated provenance.
+
+    中文: Token 数逐维相加; 任一来源为估算值时, 合并结果也必须保留 estimated 标记。
+    """
     return ModelUsage(
         input_tokens=left.input_tokens + right.input_tokens,
         output_tokens=left.output_tokens + right.output_tokens,
@@ -113,7 +141,11 @@ def add_usage(left: ModelUsage, right: ModelUsage) -> ModelUsage:
 
 
 class InvestigationState(TypedDict, total=False):
-    """Bounded graph channels; nodes emit only their minimal updates."""
+    """Bounded graph channels; nodes emit only their minimal updates.
+
+    中文: ``total=False`` 允许每个节点只返回自己负责的字段。没有 reducer 的字段会覆盖;
+    ``completed_steps/evidence/errors`` 和计数、usage 字段则按上方 reducer 合并。
+    """
 
     incident: IncidentContext
     investigation_plan: InvestigationPlan
