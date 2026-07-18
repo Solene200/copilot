@@ -12,6 +12,7 @@ class ErrorCode(StrEnum):
     DOMAIN_VALIDATION = "domain_validation_error"
     CONFIGURATION = "configuration_error"
     NOT_FOUND = "resource_not_found"
+    CONFLICT = "resource_conflict"
     INTERNAL = "internal_error"
 
 
@@ -46,3 +47,10 @@ class ResourceNotFoundError(IncidentCopilotError):
 
     code: ClassVar[ErrorCode] = ErrorCode.NOT_FOUND
     status_code: ClassVar[int] = 404
+
+
+class ResourceConflictError(IncidentCopilotError):
+    """Raised when a state transition or idempotency key cannot be applied."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.CONFLICT
+    status_code: ClassVar[int] = 409
