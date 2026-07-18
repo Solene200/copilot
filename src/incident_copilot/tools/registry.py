@@ -11,6 +11,7 @@ from typing import Generic, TypeVar, cast
 
 from pydantic import ValidationError
 
+from incident_copilot.core.telemetry import trace_async
 from incident_copilot.domain.common import SourceType
 from incident_copilot.domain.evidence import Evidence
 from incident_copilot.tools.exceptions import (
@@ -81,6 +82,7 @@ class ToolRegistry:
             raise ToolRegistrationError(f"tool already registered: {definition.name}")
         self._tools[definition.name] = cast(ToolDefinition[ToolInput], definition)
 
+    @trace_async("incident_copilot.tool.execute", component="tool")
     async def execute(
         self,
         name: str,

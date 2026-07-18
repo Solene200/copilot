@@ -11,6 +11,7 @@ from typing import Generic, Literal, TypeVar
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, ValidationError
 
+from incident_copilot.core.telemetry import trace_async
 from incident_copilot.domain.common import (
     HypothesisStatus,
     ReportDisposition,
@@ -85,6 +86,7 @@ class InvestigationNodes:
         self._clock = clock
         self._fallback_model = FakeModelProvider()
 
+    @trace_async("incident_copilot.node.parse_incident", component="node")
     async def parse_incident(self, state: InvestigationState) -> InvestigationState:
         """Accept the already-domain-validated incident at the graph boundary."""
         if not state["incident"].services:
@@ -95,10 +97,12 @@ class InvestigationNodes:
             update["stop_reason"] = StopReason.DEADLINE_EXCEEDED
         return update
 
+    @trace_async("incident_copilot.node.build_investigation_plan", component="node")
     async def build_investigation_plan(self, state: InvestigationState) -> InvestigationState:
         """Generate the first bounded plan through a structured output Schema."""
         return await self._plan_update(state, round_number=state["research_round"])
 
+    @trace_async("incident_copilot.node.refine_investigation", component="node")
     async def refine_investigation(self, state: InvestigationState) -> InvestigationState:
         """Increment the single-writer round and create only incremental queries."""
         next_round = state["research_round"] + 1
@@ -138,6 +142,7 @@ class InvestigationNodes:
             goto="refine_investigation",
         )
 
+    @trace_async("incident_copilot.node.collect_evidence", component="node")
     async def collect_evidence(self, state: InvestigationState) -> InvestigationState:
         """Execute one Send-scoped tool step and convert failures into state data."""
         step = state["current_step"]
@@ -189,6 +194,7 @@ class InvestigationNodes:
             "tool_success_count": 1,
         }
 
+    @trace_async("incident_copilot.node.aggregate_evidence", component="node")
     async def aggregate_evidence(self, state: InvestigationState) -> InvestigationState:
         """Mark hard stops after all branches in the current batch reach the barrier."""
         deadline_exceeded = self._clock() >= state["deadline_at"]
@@ -200,6 +206,7 @@ class InvestigationNodes:
             update["stop_reason"] = reason
         return update
 
+    @trace_async("incident_copilot.node.generate_hypotheses", component="node")
     async def generate_hypotheses(self, state: InvestigationState) -> InvestigationState:
         """Generate Schema-validated hypotheses or use the deterministic fallback."""
         context = self._model_context(state, ModelTask.HYPOTHESES)
@@ -213,6 +220,7 @@ class InvestigationNodes:
             **({"stop_reason": call.stop_reason} if call.stop_reason is not None else {}),
         }
 
+    @trace_async("incident_copilot.node.verify_hypotheses", component="node")
     async def verify_hypotheses(self, state: InvestigationState) -> InvestigationState:
         """Enforce evidence foreign keys and confidence policy outside the model."""
         evidence_by_id = {item.evidence_id: item for item in state.get("evidence", ())}
@@ -250,6 +258,7 @@ class InvestigationNodes:
             )
         return {"hypotheses": tuple(verified)}
 
+    @trace_async("incident_copilot.node.judge_evidence", component="node")
     async def judge_evidence(self, state: InvestigationState) -> InvestigationState:
         """Combine structured judgement with deterministic sufficiency and stop rules."""
         context = self._model_context(state, ModelTask.JUDGE)
@@ -287,6 +296,7 @@ class InvestigationNodes:
             update["stop_reason"] = call.stop_reason
         return update
 
+    @trace_async("incident_copilot.node.generate_report", component="node")
     async def generate_report(self, state: InvestigationState) -> InvestigationState:
         """Build an honest domain report and attach only verified Evidence IDs."""
         context = self._model_context(state, ModelTask.REPORT)
@@ -452,6 +462,7 @@ class InvestigationNodes:
             update["stop_reason"] = reason
         return update
 
+    @trace_async("incident_copilot.model.structured_complete", component="model")
     async def _call_structured(
         self,
         state: InvestigationState,

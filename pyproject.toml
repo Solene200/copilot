@@ -19,6 +19,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+observability = [
+    "opentelemetry-api>=1.43,<2",
+    "opentelemetry-sdk>=1.43,<2",
+]
 postgres = [
     "langgraph-checkpoint-postgres>=3.1,<4",
     "psycopg[binary]>=3.3,<4",
