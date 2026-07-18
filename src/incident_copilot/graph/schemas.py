@@ -44,6 +44,16 @@ class StopReason(StrEnum):
     DEADLINE_EXCEEDED = "deadline_exceeded"
 
 
+class InvestigationOptions(DomainModel):
+    """Immutable invocation budgets controlled by application code, never by a model."""
+
+    max_research_rounds: int = Field(default=2, ge=1, le=5)
+    max_tool_calls: int = Field(default=14, ge=1, le=100)
+    max_parallel_tools: int = Field(default=7, ge=1, le=20)
+    max_model_calls: int = Field(default=20, ge=1, le=50)
+    timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+
+
 class ModelTask(StrEnum):
     """Allow-listed structured model operations used by Phase 4."""
 
