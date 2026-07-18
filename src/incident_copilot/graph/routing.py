@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
+from incident_copilot.domain.common import RiskLevel
 from incident_copilot.graph.schemas import RouteTarget, StopReason
 from incident_copilot.graph.state import InvestigationState
 
@@ -67,3 +68,13 @@ def route_after_judge(
     if decide_after_judge(state).target is RouteTarget.REFINE:
         return "refine_investigation"
     return "generate_report"
+
+
+def route_after_report(state: InvestigationState) -> Literal["human_review", "__end__"]:
+    """Require review only when the generated report contains high-risk actions."""
+    report = state["final_report"]
+    if any(
+        step.risk_level in {RiskLevel.HIGH, RiskLevel.CRITICAL} for step in report.remediation_steps
+    ):
+        return "human_review"
+    return "__end__"

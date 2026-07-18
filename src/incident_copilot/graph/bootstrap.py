@@ -3,6 +3,8 @@
 from collections.abc import Callable
 from datetime import datetime
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
+
 from incident_copilot.graph.builder import InvestigationGraph, build_investigation_graph
 from incident_copilot.graph.model import FakeModelProvider, ModelProvider
 from incident_copilot.graph.nodes import utc_now
@@ -16,6 +18,8 @@ def build_offline_investigation_graph(
     *,
     model: ModelProvider | None = None,
     clock: Callable[[], datetime] = utc_now,
+    checkpointer: BaseCheckpointSaver[str] | None = None,
+    require_human_review: bool = False,
 ) -> InvestigationGraph:
     """Build a no-key/no-network investigation graph for tests and demos."""
     fixture = FixtureProvider.payment_service()
@@ -35,4 +39,6 @@ def build_offline_investigation_graph(
         registry=registry,
         model=model or FakeModelProvider(),
         clock=clock,
+        checkpointer=checkpointer,
+        require_human_review=require_human_review,
     )

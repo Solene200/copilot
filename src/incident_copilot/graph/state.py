@@ -12,6 +12,7 @@ from incident_copilot.domain.evidence import EvidenceRef
 from incident_copilot.domain.hypothesis import Hypothesis, VerificationQuery
 from incident_copilot.domain.incident import IncidentContext
 from incident_copilot.domain.report import IncidentReport
+from incident_copilot.domain.review import HumanFeedback
 from incident_copilot.graph.schemas import (
     InvestigationError,
     InvestigationPlan,
@@ -139,5 +140,7 @@ class InvestigationState(TypedDict, total=False):
     deadline_at: datetime
     deadline_exceeded: bool
     errors: Annotated[tuple[InvestigationError, ...], merge_errors]
-    stop_reason: StopReason
+    stop_reason: StopReason | None
     final_report: IncidentReport
+    human_feedback: HumanFeedback
+    review_completed: bool

@@ -6,8 +6,9 @@ from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
 
+from langgraph.types import Command, interrupt
 from pydantic import BaseModel, ValidationError
 
 from incident_copilot.domain.common import (
@@ -24,6 +25,7 @@ from incident_copilot.domain.report import (
     RemediationStep,
     TimelineEvent,
 )
+from incident_copilot.domain.review import HumanFeedback, HumanReviewRequest, ReviewAction
 from incident_copilot.graph.model import FakeModelProvider, ModelProvider
 from incident_copilot.graph.routing import budget_stop_reason, decide_after_judge
 from incident_copilot.graph.schemas import (
@@ -103,6 +105,38 @@ class InvestigationNodes:
         update = await self._plan_update(state, round_number=next_round)
         update["research_round"] = next_round
         return update
+
+    def human_review(
+        self, state: InvestigationState
+    ) -> Command[Literal["refine_investigation", "__end__"]]:
+        """Pause before a high-risk recommendation can become a confirmed report."""
+        report = state["final_report"]
+        high_risk_actions = tuple(
+            step.action
+            for step in report.remediation_steps
+            if step.risk_level in {RiskLevel.HIGH, RiskLevel.CRITICAL}
+        )
+        request = HumanReviewRequest(
+            report_id=report.report_id,
+            reason="High-risk remediation requires explicit human confirmation.",
+            high_risk_actions=high_risk_actions,
+        )
+        raw_feedback = interrupt(request.model_dump(mode="json"))
+        feedback = HumanFeedback.model_validate(raw_feedback)
+        if feedback.action is ReviewAction.ACCEPT:
+            return Command(
+                update={"human_feedback": feedback, "review_completed": True},
+                goto="__end__",
+            )
+        return Command(
+            update={
+                "human_feedback": feedback,
+                "review_completed": False,
+                "evidence_sufficient": False,
+                "stop_reason": None,
+            },
+            goto="refine_investigation",
+        )
 
     async def collect_evidence(self, state: InvestigationState) -> InvestigationState:
         """Execute one Send-scoped tool step and convert failures into state data."""
@@ -279,7 +313,7 @@ class InvestigationNodes:
             }.values()
         )
         timeline = self._timeline((*supporting, *contradicting))
-        stop_reason = state["stop_reason"]
+        stop_reason = state.get("stop_reason") or StopReason.MAX_RESEARCH_ROUNDS
         disposition = (
             ReportDisposition.PROBABLE
             if stop_reason is StopReason.EVIDENCE_SUFFICIENT and bool(supporting)
@@ -320,7 +354,7 @@ class InvestigationNodes:
                 RemediationStep(
                     action=action,
                     priority=index,
-                    risk_level=RiskLevel.MEDIUM,
+                    risk_level=(RiskLevel.HIGH if index == 1 else RiskLevel.MEDIUM),
                     validation="Verify the cited signals return to their expected range.",
                     rollback="Restore the prior reviewed configuration if validation fails.",
                     requires_human_approval=True,

@@ -4,6 +4,7 @@ from collections.abc import Callable, Hashable
 from datetime import datetime, timedelta
 from typing import Literal, overload
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Send
@@ -11,7 +12,7 @@ from langgraph.types import Send
 from incident_copilot.domain.incident import IncidentContext
 from incident_copilot.graph.model import ModelProvider
 from incident_copilot.graph.nodes import InvestigationNodes, utc_now
-from incident_copilot.graph.routing import route_after_judge, route_after_parse
+from incident_copilot.graph.routing import route_after_judge, route_after_parse, route_after_report
 from incident_copilot.graph.schemas import InvestigationOptions, ModelUsage
 from incident_copilot.graph.state import InvestigationState
 from incident_copilot.tools.registry import ToolRegistry
@@ -130,8 +131,10 @@ def build_investigation_graph(
     registry: ToolRegistry,
     model: ModelProvider,
     clock: Callable[[], datetime] = utc_now,
+    checkpointer: BaseCheckpointSaver[str] | None = None,
+    require_human_review: bool = False,
 ) -> InvestigationGraph:
-    """Compile the exact Phase 4 graph without checkpoint or HITL concerns."""
+    """Compile the workflow, optionally adding durable human review semantics."""
     nodes = InvestigationNodes(registry=registry, model=model, clock=clock)
     builder = StateGraph(InvestigationState)
     builder.add_node("parse_incident", nodes.parse_incident)
@@ -143,6 +146,12 @@ def build_investigation_graph(
     builder.add_node("judge_evidence", nodes.judge_evidence)
     builder.add_node("refine_investigation", nodes.refine_investigation)
     builder.add_node("generate_report", nodes.generate_report)
+    if require_human_review:
+        builder.add_node(
+            "human_review",
+            nodes.human_review,
+            destinations=("refine_investigation", END),
+        )
 
     builder.add_edge(START, "parse_incident")
     builder.add_conditional_edges(
@@ -189,5 +198,15 @@ def build_investigation_graph(
         dispatch_evidence_collection,
         path_map=dispatch_targets,
     )
-    builder.add_edge("generate_report", END)
-    return builder.compile(name="incident-copilot-phase-4")
+    if require_human_review:
+        builder.add_conditional_edges(
+            "generate_report",
+            route_after_report,
+            path_map={"human_review": "human_review", "__end__": END},
+        )
+    else:
+        builder.add_edge("generate_report", END)
+    return builder.compile(
+        checkpointer=checkpointer,
+        name=("incident-copilot-phase-5" if require_human_review else "incident-copilot-phase-4"),
+    )
