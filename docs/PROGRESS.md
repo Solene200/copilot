@@ -34,7 +34,7 @@
 
 | 状态 | 日期 | 代码 | 环境 | Artifact / 结论 |
 | --- | --- | --- | --- | --- |
-| Current offline | 2026-07-20 | Batch D implementation commit（提交后补录） | Windows / PowerShell；Python 3.13 | `artifacts/evaluation/batch-d-product-boundaries/`；3/3 completed |
+| Current offline | 2026-07-20 | `89ae62e` | Windows / PowerShell；Python 3.13 | `artifacts/evaluation/batch-d-product-boundaries/`；3/3 completed |
 | Current prior batch | 2026-07-20 | `7906944` | Windows / PowerShell；Python 3.13 | `artifacts/evaluation/batch-c-tool-attempt-budget/` |
 | Historical live | 2026-07-18 | `9249b8c` | Windows Docker Linux Engine | Phase 7 Compose/Prometheus 记录；仅 payment 场景 |
 
