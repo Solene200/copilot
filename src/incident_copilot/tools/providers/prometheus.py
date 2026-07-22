@@ -162,6 +162,7 @@ class PrometheusMetricsProvider:
 
     async def query(self, query: QueryMetricsInput, context: QueryContext) -> tuple[Evidence, ...]:
         """执行一次安全范围查询并保留来源定位信息。"""
+        # 外部输入只能选择领域指标白名单, 不能把任意 PromQL 直接发送给 Prometheus。
         mapping = METRIC_MAPPINGS.get(query.metric_name)
         if mapping is None or query.aggregation not in mapping.supported_aggregations:
             raise ProviderInvalidQueryError(
@@ -170,6 +171,7 @@ class PrometheusMetricsProvider:
                 operation="query_metrics",
             )
 
+        # PromQL 完全由白名单映射和已经校验的服务名生成, 查询文本不参与模板拼接。
         promql = self._build_promql(mapping, query)
         request_url = self._build_request_url(promql, query)
         remaining_seconds = (context.deadline - self._clock()).total_seconds()
@@ -181,6 +183,7 @@ class PrometheusMetricsProvider:
                 operation="query_metrics",
             )
         try:
+            # Transport 是可替换边界: 生产使用 urllib, 测试使用不会联网的受控 Fake。
             response = await self._transport.get(request_url, timeout_seconds=timeout_seconds)
         except TimeoutError as exc:
             raise ProviderTimeoutError(
@@ -201,6 +204,7 @@ class PrometheusMetricsProvider:
                 operation="query_metrics",
             ) from exc
 
+        # HTTP 状态和 JSON 结构分别归一化, 调用方只处理稳定 ProviderError 分类。
         self._raise_for_status(response.status_code)
         envelope = self._parse_response(response.body)
         if len(envelope.data.result) > query.limit:
@@ -222,6 +226,7 @@ class PrometheusMetricsProvider:
 
     @staticmethod
     def _validate_base_url(base_url: str) -> str:
+        # 基础地址只允许无凭据、无查询参数的 HTTP(S) 主机, 防止秘密写入 Citation URL。
         normalized = base_url.strip().rstrip("/")
         parsed = urlsplit(normalized)
         if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
@@ -236,6 +241,7 @@ class PrometheusMetricsProvider:
     def _build_promql(mapping: _MetricMapping, query: QueryMetricsInput) -> str:
         selector = f'{mapping.prometheus_name}{{service="{query.service}"}}'
         aggregation = query.aggregation
+        # rate/p95 映射到受控模板, 其他聚合也已在 mapping 白名单中验证。
         if aggregation == "rate":
             return f"max by (service) ({selector})"
         if aggregation == "p95":
@@ -244,6 +250,7 @@ class PrometheusMetricsProvider:
 
     def _build_request_url(self, promql: str, query: QueryMetricsInput) -> str:
         duration_seconds = (query.end_time - query.start_time).total_seconds()
+        # 动态 step 保证最长查询窗口也不会超过单序列采样点上限。
         step_seconds = max(15, math.ceil(duration_seconds / MAX_POINTS_PER_SERIES))
         parameters = urlencode(
             {
@@ -258,6 +265,7 @@ class PrometheusMetricsProvider:
 
     @staticmethod
     def _raise_for_status(status_code: int) -> None:
+        # HTTP 状态映射为稳定错误类别, Registry 据此决定是否允许重试。
         if status_code in {400, 422}:
             raise ProviderInvalidQueryError(
                 "Prometheus rejected the generated query",
@@ -297,6 +305,7 @@ class PrometheusMetricsProvider:
         request_url: str,
         series_index: int,
     ) -> Evidence:
+        # 先执行资源与租户边界校验, 再解析采样点, 防止大响应占用过多内存。
         if len(series.values) > MAX_POINTS_PER_SERIES:
             raise ProviderMalformedResponseError(
                 "Prometheus series exceeded the configured point limit",
@@ -333,6 +342,7 @@ class PrometheusMetricsProvider:
                     provider_name=PROVIDER_NAME,
                     operation="query_metrics",
                 )
+            # 严格递增能避免重复点或乱序点改变 maximum/latest 的业务含义。
             if previous_timestamp is not None and timestamp <= previous_timestamp:
                 raise ProviderMalformedResponseError(
                     "Prometheus returned samples outside strict timestamp order",
@@ -362,7 +372,9 @@ class PrometheusMetricsProvider:
             "labels": dict(sorted(series.metric.items())),
             "points": points,
         }
+        # 内容哈希把 Citation 与 Evidence 载荷绑定, 报告阶段可以验证引用未被替换。
         content_hash = content_sha256(content)
+        # Evidence ID 由查询范围、序列序号和内容生成, 相同响应重放仍得到相同标识。
         identity = hashlib.sha256(
             (
                 f"{query.service}|{query.metric_name}|{query.aggregation}|"

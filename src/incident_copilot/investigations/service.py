@@ -76,6 +76,7 @@ class InvestigationService:
         应用关闭时先取消并 await 所有进程内任务,避免 Graph 仍在使用已关闭的
         Checkpointer 或 Provider 资源。
         """
+        # 先复制任务列表再取消, done callback 修改原字典时不会影响当前遍历。
         tasks = tuple(self._tasks.values())
         for task in tasks:
             task.cancel()
@@ -98,6 +99,7 @@ class InvestigationService:
         新建的记录才会产生 queued 事件并启动后台 Graph,避免同一请求重复调查。
         """
         now = self._clock()
+        # 同一随机 resource_key 派生 investigation_id 和 thread_id, 使进程重启后可反推快照。
         resource_key = uuid4().hex
         investigation_id = f"inv_{resource_key}"
         record = InvestigationRecord(
@@ -112,6 +114,7 @@ class InvestigationService:
             created_at=now,
             updated_at=now,
         )
+        # Repository 原子处理 Idempotency-Key; Service 只为真正新建的记录启动一次后台任务。
         stored, created = await self._repository.create(record)
         if not created:
             return stored, False
@@ -144,6 +147,7 @@ class InvestigationService:
         """
         lock = self._locks.setdefault(investigation_id, asyncio.Lock())
         async with lock:
+            # 进程内锁先串行化同一调查的恢复请求, Repository version 再提供第二层保护。
             record = await self.get(investigation_id)
             if record.status is not InvestigationStatus.WAITING_REVIEW:
                 raise ResourceConflictError(
@@ -151,6 +155,7 @@ class InvestigationService:
                     details={"status": record.status.value},
                 )
             config = self._config(record.thread_id)
+            # 是否还能追加研究以 checkpoint 中的真实累计预算为准, 不信任客户端状态。
             snapshot = await self._graph.aget_state(config)
             state = cast(InvestigationState, snapshot.values)
             if feedback.action is ReviewAction.REQUEST_MORE_RESEARCH:
@@ -174,6 +179,7 @@ class InvestigationService:
             )
             update: dict[str, object] | None = None
             if feedback.action is ReviewAction.REQUEST_MORE_RESEARCH:
+                # 新一轮获得新的墙钟 deadline, 但研究轮数和各类调用累计值不会重置。
                 update = {
                     "deadline_at": now + timedelta(seconds=record.options.timeout_seconds),
                     "deadline_exceeded": False,
@@ -199,6 +205,7 @@ class InvestigationService:
 
         这是受控轮询辅助方法,不是生产任务队列;主要供脚本和测试等待可观察结果。
         """
+        # 等待超时使用事件循环单调时钟, 不受系统时间校准或时区变化影响。
         deadline = asyncio.get_running_loop().time() + timeout_seconds
         while True:
             record = await self._repository.get(investigation_id)
@@ -218,6 +225,7 @@ class InvestigationService:
         self._tasks[investigation_id] = task
 
         def remove(completed: asyncio.Task[None]) -> None:
+            # done callback 同时清理引用和读取异常, 避免后台 Task 产生未观察异常警告。
             if self._tasks.get(investigation_id) is completed:
                 self._tasks.pop(investigation_id, None)
             try:
@@ -247,6 +255,7 @@ class InvestigationService:
                 details={"investigation_id": investigation_id},
             )
         thread_id = f"thread_{resource_key}"
+        # 业务 Repository 丢失时只能恢复 checkpoint 中存在的数据, 历史 SSE 事件不会伪造。
         snapshot = await self._graph.aget_state(self._config(thread_id))
         state = cast(InvestigationState, snapshot.values)
         incident = state.get("incident")
@@ -261,6 +270,7 @@ class InvestigationService:
             if interrupt_value is not None
             else None
         )
+        # interrupt、已结束且有报告、仍可运行三种快照分别映射为业务任务状态。
         status = (
             InvestigationStatus.WAITING_REVIEW
             if review_request is not None
@@ -269,6 +279,7 @@ class InvestigationService:
             else InvestigationStatus.PENDING
         )
         started_at = state.get("started_at", self._clock())
+        # 从 State 中重建原预算, 让恢复后的 resume 继续遵守创建时的限制。
         options = InvestigationOptions(
             max_research_rounds=state.get("max_research_rounds", 2),
             max_tool_calls=state.get("max_tool_calls", 14),
@@ -302,6 +313,7 @@ class InvestigationService:
         """把新任务切换到 running,构造初始 State 并进入统一执行路径。"""
         try:
             record = await self._repository.get(investigation_id)
+            # 先持久化 running 和 started 事件, 再进入 Graph, 客户端不会看到无状态后台任务。
             running = record.model_copy(
                 update={
                     "status": InvestigationStatus.RUNNING,
@@ -348,10 +360,12 @@ class InvestigationService:
                 stream_mode="updates",
             ):
                 if isinstance(update, Mapping):
+                    # Graph 增量先投影为公开事件, 不把内部 State 或模型载荷直接推给 SSE。
                     await self._project_graph_update(
                         record,
                         cast(Mapping[object, object], update),
                     )
+            # 流结束可能表示正常完成, 也可能表示 interrupt 暂停, 必须读取最终快照区分。
             snapshot = await self._graph.aget_state(config)
             latest = await self._repository.get(investigation_id)
             interrupt_value = self._interrupt_value(snapshot.tasks)
@@ -379,6 +393,7 @@ class InvestigationService:
             if report is None:
                 # Graph 没有报告不能伪装成 completed,统一进入 failed 路径。
                 raise RuntimeError("graph completed without a final report")
+            # 只有存在通过领域 Schema 校验的 final_report 才能进入 completed。
             completed = latest.model_copy(
                 update={
                     "status": InvestigationStatus.COMPLETED,
@@ -408,6 +423,7 @@ class InvestigationService:
             await self._mark_failed(investigation_id)
 
     async def _mark_failed(self, investigation_id: str) -> None:
+        # 对外只保存稳定安全消息; 详细堆栈已经由调用处写入服务端日志。
         latest = await self._repository.get(investigation_id)
         failed = latest.model_copy(
             update={
@@ -432,6 +448,7 @@ class InvestigationService:
         """把 Graph 内部节点更新转换成稳定、脱敏且可排序的应用事件。"""
         for raw_node, raw_value in update.items():
             node = str(raw_node)
+            # interrupt 有专门的 REVIEW_REQUIRED 事件, 不把内部伪节点重复暴露给客户端。
             if node == "__interrupt__":
                 continue
             await self._append_event(record, EventType.NODE_COMPLETED, {"node": node})
@@ -439,6 +456,7 @@ class InvestigationService:
                 continue
             node_update = cast(Mapping[str, object], raw_value)
             for step in self._models(node_update.get("completed_steps"), StepResult):
+                # StepResult 已经把 Provider 异常压缩成状态与尝试数, 事件中不泄漏原始错误。
                 event_type = (
                     EventType.TOOL_COMPLETED
                     if step.status is StepStatus.COMPLETED
@@ -456,6 +474,7 @@ class InvestigationService:
                     },
                 )
             for evidence in self._models(node_update.get("evidence"), EvidenceRef):
+                # SSE 只携带 EvidenceRef 摘要和 Citation, 不发送 Provider 的完整 content。
                 timestamp = evidence.timestamp or evidence.start_time
                 await self._append_event(
                     record,
@@ -486,6 +505,7 @@ class InvestigationService:
                 "stop_reason",
             }
             if budget_keys.intersection(node_update):
+                # Reducer 接收的是增量, 因此事件字段明确标记 delta 而不是累计总数。
                 await self._append_event(
                     record,
                     EventType.BUDGET_UPDATED,
@@ -512,7 +532,9 @@ class InvestigationService:
     ) -> None:
         """生成调查内单调序号,并在写入 Repository 前递归脱敏载荷。"""
         existing = await self._repository.list_events(record.investigation_id)
+        # 序号在 Repository 当前事件尾部生成; Adapter 会再次验证单调性以发现并发冲突。
         sequence = len(existing) + 1
+        # 所有嵌套数据在持久化和 streaming 前统一递归脱敏。
         sanitized = cast(dict[str, JsonValue], redact_value(dict(data)))
         await self._repository.append_event(
             InvestigationEvent(
@@ -536,6 +558,7 @@ class InvestigationService:
 
     @staticmethod
     def _interrupt_value(tasks: Any) -> object | None:
+        # 当前 Graph 只允许一个审核 interrupt, 找到首个值即可交给 Pydantic 校验。
         for task in tasks:
             for item in task.interrupts:
                 return cast(object, item.value)
@@ -550,6 +573,7 @@ class InvestigationService:
     def _ensure_research_budget(state: InvestigationState) -> None:
         """在接受“追加研究”反馈前执行不可绕过的确定性预算检查。"""
         usage = state.get("model_usage", ModelUsage())
+        # 任一硬预算耗尽都拒绝恢复, 人工审核不能成为绕过自动安全边界的后门。
         exhausted = (
             state["research_round"] >= state["max_research_rounds"]
             or state.get("tool_call_count", 0) >= state["max_tool_calls"]

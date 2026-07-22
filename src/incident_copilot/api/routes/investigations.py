@@ -51,6 +51,7 @@ async def create_investigation(
     请求在这里取得新的 incident ID;稳定的 investigation/thread/run 标识及后台
     执行由 Service 创建。返回 202 表示任务已接收,不表示调查已经完成。
     """
+    # HTTP 层只生成外部 incident_id 并完成协议转换, 不直接构造 Graph State。
     incident = payload.to_incident(f"inc_{uuid4().hex}")
     record, created = await _service(request).create(
         incident=incident,
@@ -58,6 +59,7 @@ async def create_investigation(
         request_fingerprint=payload.fingerprint(),
         idempotency_key=idempotency_key,
     )
+    # Location 指向稳定查询端点; 幂等重放仍返回同一个调查资源地址。
     settings = cast(Settings, request.app.state.settings)
     response.headers["Location"] = (
         f"{settings.api_prefix}/v1/investigations/{record.investigation_id}"
@@ -106,6 +108,7 @@ async def stream_investigation_events(
     ``Last-Event-ID`` 从已确认序号之后继续读取。
     """
     service = _service(request)
+    # 建立流之前先确认资源存在, 避免 StreamingResponse 启动后才返回普通 JSON 错误。
     await service.get(investigation_id)
     after_sequence = _parse_last_event_id(investigation_id, last_event_id)
     settings = cast(Settings, request.app.state.settings)
@@ -140,6 +143,7 @@ async def _event_stream(
     """
     sequence = after_sequence
     while True:
+        # 每轮先排空已经持久化的事件, 重连客户端不会漏掉等待期间产生的数据。
         events = await service.repository.list_events(
             investigation_id,
             after_sequence=sequence,
@@ -153,6 +157,7 @@ async def _event_stream(
             return
         if await request.is_disconnected():
             return
+        # 没有历史事件且任务仍运行时挂起等待, Repository Condition 会在追加事件后唤醒。
         events = await service.repository.wait_for_events(
             investigation_id,
             after_sequence=sequence,
@@ -164,6 +169,7 @@ async def _event_stream(
 
 
 def _format_sse(event: InvestigationEvent) -> str:
+    # 每个消息同时携带 id、事件类型和完整 JSON, 客户端可按标准 SSE 字段解析。
     payload = event.model_dump_json()
     return f"id: {event.event_id}\nevent: {event.event_type.value}\ndata: {payload}\n\n"
 
@@ -172,6 +178,7 @@ def _parse_last_event_id(investigation_id: str, value: str | None) -> int:
     """校验重连游标确实属于当前调查,并提取单调递增的事件序号。"""
     if value is None:
         return 0
+    # 游标前缀包含 investigation 资源键, 防止拿另一条调查的事件序号跨流读取。
     prefix = f"evt_{investigation_id.removeprefix('inv_')}_"
     if not value.startswith(prefix):
         raise DomainValidationError("Last-Event-ID does not belong to this investigation")

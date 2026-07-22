@@ -61,6 +61,7 @@ def _step(
     arguments: dict[str, object],
     priority: int,
 ) -> InvestigationStep:
+    # 工具名和规范参数共同决定查询身份, 使计划重放不会产生新的逻辑步骤。
     query_key = stable_query_key(tool_name, arguments)
     return InvestigationStep(
         step_id=f"step_r{round_number}_{ordinal}_{query_key[:12]}",
@@ -93,6 +94,7 @@ class FakeModelProvider:
         Usage 是基于字符数的估算值, 所以必须设置 ``estimated=True``。
         """
         output: PlanOutput | HypothesesOutput | SufficiencyOutput | ReportDraftOutput
+        # task 是枚举白名单, 这里不会根据模型文本或用户输入动态调用任意函数。
         if context.task is ModelTask.PLAN:
             output = self._plan(context)
         elif context.task is ModelTask.HYPOTHESES:
@@ -101,6 +103,7 @@ class FakeModelProvider:
             output = self._judge(context)
         else:
             output = self._report(context)
+        # 即使是 Fake Provider 也模拟真实 Provider 的 JSON 边界, 让节点统一执行二次校验。
         payload = output.model_dump(mode="json")
         serialized_context = context.model_dump_json()
         serialized_output = output.model_dump_json()
@@ -118,6 +121,7 @@ class FakeModelProvider:
         service = context.service
         start = context.start_time
         end = context.end_time
+        # 首轮追求多源覆盖; 后续轮优先消费 judge 或人工审核提出的增量查询。
         if context.research_round == 1:
             specs = self._initial_specs(context)
         elif follow_up_specs := self._follow_up_specs(context):
@@ -165,6 +169,7 @@ class FakeModelProvider:
                     85,
                 ),
             )
+        # 规格元组在这里统一转换为强类型步骤, 避免各场景重复构造 ID 和轮次字段。
         steps = tuple(
             _step(
                 round_number=context.research_round,
@@ -196,6 +201,7 @@ class FakeModelProvider:
         evidence_text = " ".join(
             str(item.get("summary", "")) for item in context.evidence_summaries
         )
+        # 只使用用户症状和已检索证据分类, 故意不读取 incident_id 或评估标签。
         text = " ".join((context.raw_query, *context.symptoms, evidence_text)).casefold()
         if any(term in text for term in ("dns", "name resolution", "name lookup", "resolver")):
             return InvestigationScenario.DNS
@@ -215,6 +221,7 @@ class FakeModelProvider:
         start = context.start_time
         end = context.end_time
         route_name = service.removesuffix("-service")
+        # 场景仅选择查询词和指标白名单, 不直接决定最终根因或评估答案。
         if scenario is InvestigationScenario.DATABASE_POOL:
             log_query = "connection acquisition"
             metric_name, aggregation = "db.pool.utilization", "max"
@@ -235,6 +242,7 @@ class FakeModelProvider:
             metric_name, aggregation = "http.server.error_rate", "rate"
             operation = f"GET /{route_name}"
             knowledge_query = "service timeout"
+        # 所有时序工具共享同一个故障窗口, 防止不同来源因时间范围不一致而无法关联。
         common_range = {
             "service": service,
             "start_time": start.isoformat(),
@@ -301,6 +309,7 @@ class FakeModelProvider:
         )
         if scenario is not InvestigationScenario.DATABASE_POOL:
             return specs
+        # 相似事故查询只用于连接池场景的教学数据, 仍然通过 KnowledgeProvider 端口执行。
         return (
             *specs,
             (
@@ -333,6 +342,7 @@ class FakeModelProvider:
             if feedback is not None and feedback.requested_queries
             else context.next_investigation_queries
         )
+        # 人工反馈优先于上一轮自动建议, 但两者都只能映射到已有只读工具 Schema。
         specs: list[tuple[str, SourceType, str, dict[str, object], int]] = []
         for query in queries:
             service = query.service or context.service
@@ -352,6 +362,7 @@ class FakeModelProvider:
                         100,
                     )
                 elif source_type is SourceType.METRIC:
+                    # 自然语言不能直接成为 PromQL; 这里只能选择预先批准的领域指标名。
                     normalized = query.query.casefold()
                     pool_metric = any(
                         term in normalized for term in ("database", "connection", "pool")
@@ -413,6 +424,7 @@ class FakeModelProvider:
                         75,
                     )
                 specs.append(spec)
+                # Pydantic 限制之外再设置转换上限, 防止一个反馈展开成过多并行步骤。
                 if len(specs) == 20:
                     return tuple(specs)
         return tuple(specs)
@@ -420,11 +432,13 @@ class FakeModelProvider:
     def _hypotheses(self, context: ModelContext) -> HypothesesOutput:
         """从证据语义构造一个领先假设和一个可证伪的竞争假设。"""
         scenario = self._scenario(context)
+        # 先按确定性相关性阈值过滤, Fake Model 不会把所有证据都包装成“支持根因”。
         relevant = tuple(
             item
             for item in context.evidence_summaries
             if self._numeric_score(item.get("relevance_score")) >= 0.75
         )
+        # 主假设要求症状、指标和变更链; 拓扑与 Trace 用来构造可证伪的竞争假设。
         lead_sources = {SourceType.LOG.value, SourceType.METRIC.value, SourceType.CHANGE.value}
         supporting = tuple(
             str(item["evidence_id"])
@@ -485,6 +499,7 @@ class FakeModelProvider:
 
     @staticmethod
     def _hypothesis_text(scenario: InvestigationScenario, service: str) -> tuple[str, str]:
+        # 每个场景同时给出主假设和竞争假设, 后者用于展示反证与拒绝流程。
         if scenario is InvestigationScenario.DATABASE_POOL:
             return (
                 f"A database connection pool limit regression saturated {service} and caused "
@@ -520,6 +535,7 @@ class FakeModelProvider:
         verification_query: str,
         reasoning: str,
     ) -> Hypothesis:
+        # 假设 ID 只由稳定业务内容生成, 与进程、当前时间和返回顺序无关。
         digest = hashlib.sha256(
             "|".join(
                 (context.service, role, *supporting_ids, "against", *contradicting_ids)
@@ -547,6 +563,7 @@ class FakeModelProvider:
     def _judge(self, context: ModelContext) -> SufficiencyOutput:
         """根据来源覆盖、研究轮次和假设存在性产生结构化充分性建议。"""
         source_types = {str(item["source_type"]) for item in context.evidence_summaries}
+        # Fake Judge 只给出结构化建议; 节点层还会验证 supported 状态和硬预算。
         enough_sources = len(source_types) >= 2
         enough_rounds = context.research_round >= self._minimum_research_rounds
         sufficient = enough_sources and enough_rounds and bool(context.hypotheses)
@@ -572,6 +589,7 @@ class FakeModelProvider:
     @staticmethod
     def _report(context: ModelContext) -> ReportDraftOutput:
         """生成叙事草稿; 最终引用、风险和 disposition 仍由可信节点代码决定。"""
+        # 草稿可以复述已验证主假设, 但没有假设时必须明确承认证据不足。
         root_cause = (
             context.hypotheses[0].description
             if context.hypotheses

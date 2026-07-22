@@ -30,6 +30,7 @@ class QueryRewriter:
 
     def rewrite(self, query: str) -> str:
         """依次返回规范化原始词和去重后的已审核别名。"""
+        # 先统一大小写和空白, 保留原始词序以便结果可解释。
         normalized = " ".join(query.strip().casefold().split())
         if len(normalized) < 2:
             raise ValueError("query must contain at least two characters")
@@ -37,6 +38,7 @@ class QueryRewriter:
         output: list[str] = []
 
         def append(value: str) -> None:
+            # 用列表而不是 set 去重, 既避免重复又保持稳定输出顺序。
             if value and value not in output:
                 output.append(value)
 
@@ -45,6 +47,7 @@ class QueryRewriter:
             for expansion in self._token_expansions.get(term, ()):
                 append(expansion)
         for phrase, expansion in self._phrase_expansions.items():
+            # 中文短语按包含关系追加英文别名, 不删除用户原始查询词。
             if phrase in normalized:
                 for term in expansion.split():
                     append(term)

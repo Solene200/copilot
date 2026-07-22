@@ -22,8 +22,10 @@ def _request_id(request: Request) -> str:
 
 async def handle_application_error(request: Request, exc: Exception) -> JSONResponse:
     """把已知应用异常映射为公开错误响应。"""
+    # FastAPI 按异常类型注册处理器, 此检查同时保护直接调用测试和错误注册配置。
     if not isinstance(exc, IncidentCopilotError):
         raise exc
+    # 应用异常的 message/details 仍经过脱敏, 不能因为“已知异常”就默认内容安全。
     response = ErrorResponse(
         error=ErrorDetail(
             code=exc.code.value,
@@ -41,6 +43,7 @@ async def handle_request_validation_error(request: Request, exc: Exception) -> J
         raise exc
     issues: list[dict[str, JsonValue]] = []
     for error in exc.errors():
+        # 只返回位置、类型和安全消息, 刻意丢弃 Pydantic error 中可能包含的原始 input。
         location = [
             str(part) if not isinstance(part, int) else part for part in error.get("loc", ())
         ]
@@ -65,6 +68,7 @@ async def handle_request_validation_error(request: Request, exc: Exception) -> J
 async def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
     """记录意外故障并返回稳定且不含敏感信息的响应。"""
     request_id = _request_id(request)
+    # 详细异常只写服务端日志, 客户端得到稳定通用消息和可关联 request_id。
     logger.error(
         "Unhandled application error",
         exc_info=exc,

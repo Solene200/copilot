@@ -33,6 +33,7 @@ class RepositoryEvidenceResolver(EvidenceResolver):
     def resolve(self, citation: Citation) -> JsonValue:
         """根据受控 URI 和 locator 重新读取原始内容。"""
         parsed = urlsplit(citation.uri)
+        # Resolver 只支持仓库内两种 scheme, 不会因评估引用触发网络访问。
         if parsed.query or parsed.fragment:
             raise EvidenceResolutionError("local citation URI must not contain query or fragment")
         if parsed.scheme == "fixture" and parsed.netloc == "incidents":
@@ -44,6 +45,7 @@ class RepositoryEvidenceResolver(EvidenceResolver):
         )
 
     def _resolve_fixture(self, relative_path: str, locator: str) -> JsonValue:
+        # 路径安全检查先于文件读取, locator 再限制为 evidence[index] 子树。
         path = self._safe_source_path(self._incident_root, relative_path, suffix=".json")
         match = FIXTURE_LOCATOR_PATTERN.fullmatch(locator)
         if match is None:
@@ -65,6 +67,7 @@ class RepositoryEvidenceResolver(EvidenceResolver):
         current = selected
         remaining = suffix
         while remaining:
+            # 每轮只消费一个明确的 .field 或 [index], 不使用 eval 或通用 JSONPath。
             field_match = LOCATOR_FIELD_PATTERN.match(remaining)
             if field_match is not None:
                 field = field_match.group("field")
@@ -85,6 +88,7 @@ class RepositoryEvidenceResolver(EvidenceResolver):
 
     def _resolve_knowledge(self, citation: Citation) -> JsonValue:
         relative_path = unquote(urlsplit(citation.uri).path.lstrip("/"))
+        # 先确认 URI 指向真实仓库文件, 再用与生产索引相同的 Loader/Splitter 重建 Chunk。
         expected_path = self._safe_source_path(self._knowledge_root, relative_path, suffix=".md")
         if expected_path.stat().st_size > MAX_RESOLVER_SOURCE_BYTES:
             raise EvidenceResolutionError("knowledge source exceeds resolver size limit")
@@ -94,6 +98,7 @@ class RepositoryEvidenceResolver(EvidenceResolver):
         except (OSError, UnicodeError, ValueError) as exc:
             raise EvidenceResolutionError("knowledge source cannot be reconstructed") from exc
         for chunk in chunks:
+            # URI 与 locator 必须同时一致, 仅文档相同不能证明定位到了同一段内容。
             if chunk.citation.uri == citation.uri and chunk.citation.locator == citation.locator:
                 return chunk.text
         raise EvidenceResolutionError("knowledge locator does not resolve to a chunk")
@@ -103,12 +108,14 @@ class RepositoryEvidenceResolver(EvidenceResolver):
         if not relative_path or Path(relative_path).suffix != suffix:
             raise EvidenceResolutionError(f"citation source must reference a {suffix} file")
         candidate = (root / relative_path).resolve()
+        # resolve 后同时验证父目录和文件存在性, 阻止 .. 与符号链接逃逸。
         if not candidate.is_relative_to(root) or not candidate.is_file():
             raise EvidenceResolutionError("citation source is outside the configured repository")
         return candidate
 
     @staticmethod
     def _read_json(path: Path) -> dict[str, JsonValue]:
+        # 先限制字节数再解码和解析, 大文件不会进入 json.loads。
         if path.stat().st_size > MAX_RESOLVER_SOURCE_BYTES:
             raise EvidenceResolutionError("fixture source exceeds resolver size limit")
         try:

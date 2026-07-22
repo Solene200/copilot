@@ -29,6 +29,7 @@ async def open_checkpointer(settings: Settings) -> AsyncIterator[BaseCheckpointS
         yield InMemorySaver()
         return
     if settings.postgres_dsn is None:
+        # 选择 PostgreSQL 却没有连接信息属于启动配置错误, 不允许静默降级到内存。
         raise ConfigurationError("PostgreSQL checkpoint backend requires postgres_dsn")
     try:
         module = importlib.import_module("langgraph.checkpoint.postgres.aio")
@@ -36,6 +37,7 @@ async def open_checkpointer(settings: Settings) -> AsyncIterator[BaseCheckpointS
         raise ConfigurationError(
             "PostgreSQL checkpoint backend requires the 'postgres' project extra"
         ) from exc
+    # 可选依赖只在明确选择 postgres 后动态导入, 离线默认路径无需安装数据库驱动。
     saver_type = cast(Any, module).AsyncPostgresSaver
     manager = saver_type.from_conn_string(settings.postgres_dsn.get_secret_value())
     async with manager as saver:

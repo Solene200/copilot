@@ -59,6 +59,7 @@ def _normalized_text(value: str) -> str:
 
 def set_metrics(expected: Iterable[ItemT], actual: Iterable[ItemT]) -> SetMetrics:
     """比较去重集合,两个空集合视为完全匹配。"""
+    # 集合指标忽略顺序和重复项, 适合服务、工具、Evidence ID 这类多标签结果。
     expected_set = set(expected)
     actual_set = set(actual)
     true_positives = expected_set & actual_set
@@ -85,12 +86,14 @@ def retrieval_metrics(
     top_k: int,
 ) -> RetrievalMetrics:
     """稳定去除排名重复项后计算文档级 Recall@K 和 MRR。"""
+    # 同一文档多个 Chunk 命中只保留首次排名, 避免重复文档虚增 Recall。
     unique_ranked = tuple(dict.fromkeys(ranked_document_ids))
     expected = set(expected_document_ids)
     visible = unique_ranked[:top_k]
     recall = len(expected.intersection(visible)) / len(expected) if expected else 1.0
     reciprocal_rank = 0.0
     for rank, document_id in enumerate(visible, start=1):
+        # MRR 只关心第一条相关文档出现的位置, 找到后即可停止。
         if document_id in expected:
             reciprocal_rank = 1.0 / rank
             break
@@ -113,6 +116,7 @@ def tool_argument_metrics(
     expected_count = 0
     matched_count = 0
     for expected_call in expected_calls:
+        # 同名工具可能跨轮调用多次, 为每个期望调用选参数匹配最多的真实执行。
         expected_count += len(expected_call.arguments)
         candidates = actual_by_name.get(expected_call.tool_name, ())
         matched_count += max(
@@ -138,6 +142,7 @@ def classify_failure_type(text: str | None) -> str | None:
     if not text:
         return None
     normalized = _normalized_text(text)
+    # 每个标签按透明关键词命中数打分, 同分时用标签字典序保证结果稳定。
     scores = {
         label: sum(pattern in normalized for pattern in patterns)
         for label, patterns in FAILURE_TYPE_PATTERNS.items()
@@ -150,6 +155,7 @@ def classify_failure_type(text: str | None) -> str | None:
 
 def root_cause_term_recall(root_cause: str | None, terms: Sequence[str]) -> float:
     """不使用在线模型裁判,测量带标签因果指标的覆盖率。"""
+    # 空标签集合定义为完全覆盖; 有标签但报告无根因则定义为零覆盖。
     if not terms:
         return 1.0
     if not root_cause:
@@ -177,6 +183,7 @@ def citation_metrics(
     consistent = 0
     resolved_contents: list[tuple[Citation, JsonValue]] = []
     for item in evidence:
+        # 第一层只比较报告 Citation 与 EvidenceRef 内嵌 Citation 是否指向同一内容。
         expected = item.citation
         actual = citations.get(expected.citation_id)
         if actual is not None and (
@@ -194,11 +201,13 @@ def citation_metrics(
         if actual is None:
             continue
         try:
+            # 第二层由 Resolver 重新读取 locator; 无法解析不会被计为内容完整性样本。
             content = resolver.resolve(actual)
         except EvidenceResolutionError:
             continue
         resolved_contents.append((actual, content))
 
+    # 第三层对成功解析的原文重算哈希, 与“引用对象字段看起来一致”分开统计。
     intact = sum(
         content_sha256(content, algorithm=citation.content_hash_algorithm).casefold()
         == citation.content_hash.casefold()
@@ -222,6 +231,7 @@ def _percentile(values: Sequence[float], percentile: float) -> float | None:
     ordered = sorted(values)
     if len(ordered) == 1:
         return ordered[0]
+    # 使用线性插值, 小样本也能得到确定且可手工复核的百分位数。
     position = (len(ordered) - 1) * percentile
     lower = math.floor(position)
     upper = math.ceil(position)
@@ -233,6 +243,7 @@ def _percentile(values: Sequence[float], percentile: float) -> float | None:
 
 def aggregate_metrics(results: Sequence[EvaluationSampleResult]) -> AggregateMetrics:
     """聚合完成样例,同时让失败样例继续出现在汇总计数中。"""
+    # 质量均值只对有定义的完成结果计算; 失败数量仍由外层 Summary 单独报告。
     completed = [result for result in results if result.status is SampleStatus.COMPLETED]
     usages = [result.usage for result in completed if result.usage is not None]
     total_tokens = sum(usage.total_tokens for usage in usages)
@@ -295,6 +306,7 @@ def aggregate_metrics(results: Sequence[EvaluationSampleResult]) -> AggregateMet
 
 def json_argument_value(value: object) -> JsonValue:
     """在 Graph 参数通过 Pydantic JSON 校验后收窄其类型。"""
+    # 递归只接受 JSON 基本类型, 未知 Python 对象不会被字符串化后掩盖数据问题。
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, list):

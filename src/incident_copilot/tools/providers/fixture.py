@@ -50,6 +50,7 @@ class FixtureProvider:
     async def search(self, query: SearchLogsInput, context: QueryContext) -> tuple[Evidence, ...]:
         """返回与服务、时间和文本匹配的确定性日志证据。"""
         del context
+        # 过滤顺序与真实数据源一致: 先缩小来源/租户范围, 再按时间和全文条件筛选。
         matches = self._by_source_service(SourceType.LOG, query.service)
         matches = self._within_window(matches, query.start_time, query.end_time)
         if query.query is not None:
@@ -64,6 +65,7 @@ class FixtureProvider:
         """按照已校验输入类型分发两个查询型 Provider 端口。"""
         del context
         if isinstance(query, QueryMetricsInput):
+            # 指标名和聚合方式都必须精确匹配 Fixture metadata, 不做模糊猜测。
             matches = self._by_source_service(SourceType.METRIC, query.service)
             matches = self._within_window(matches, query.start_time, query.end_time)
             matches = (
@@ -74,6 +76,7 @@ class FixtureProvider:
             )
             return self._ordered(matches)[: query.limit]
 
+        # 另一个联合类型分支只能是 Trace 查询; Pydantic 已在 Registry 入口完成校验。
         matches = self._by_source_service(SourceType.TRACE, query.service)
         matches = self._within_window(matches, query.start_time, query.end_time)
         if query.operation is not None:
@@ -92,6 +95,7 @@ class FixtureProvider:
     ) -> tuple[Evidence, ...]:
         """优先返回最新的匹配部署或配置变更。"""
         del context
+        # 变更记录按新到旧排序, 便于优先检查最接近故障开始时间的因果候选。
         matches = self._by_source_service(SourceType.CHANGE, query.service)
         matches = self._within_window(matches, query.start_time, query.end_time)
         if query.change_type is not None:
@@ -105,6 +109,7 @@ class FixtureProvider:
     ) -> tuple[Evidence, ...]:
         """返回请求时间或更早时间中的最新拓扑快照。"""
         del context
+        # 拓扑是时间点快照, 不能用故障发生之后才采集到的依赖关系解释过去。
         matches = self._by_source_service(SourceType.TOPOLOGY, query.service)
         matches = (
             item
@@ -129,6 +134,7 @@ class FixtureProvider:
         """返回调用方有界回溯窗口内的历史事故。"""
         del context
         earliest = query.before_time - timedelta(days=query.lookback_days)
+        # 使用左闭右开区间排除当前事故本身, 防止“用答案检索答案”的数据泄漏。
         matches = self._knowledge(query.service, "incident", query.query)
         matches = (
             item
@@ -160,6 +166,7 @@ class FixtureProvider:
 
     @staticmethod
     def _overlaps(item: Evidence, start_time: datetime, end_time: datetime) -> bool:
+        # 单点证据按包含关系判断, 区间证据只要与查询窗口相交即可。
         if item.timestamp is not None:
             return start_time <= item.timestamp <= end_time
         if item.start_time is None or item.end_time is None:
@@ -173,6 +180,7 @@ class FixtureProvider:
 
     @staticmethod
     def _text_matches(item: Evidence, query: str) -> bool:
+        # 简单 AND 语义保持离线结果可解释: 每个规范化词都必须在证据文本中出现。
         terms = re.findall(r"[a-z0-9_.-]+", query.casefold())
         haystack = " ".join(
             (
@@ -189,6 +197,7 @@ class FixtureProvider:
         evidence: Iterable[Evidence], *, newest_first: bool = False
     ) -> tuple[Evidence, ...]:
         minimum = datetime.min.replace(tzinfo=UTC)
+        # evidence_id 作为同时间记录的稳定次级排序键, 保证跨平台运行结果一致。
         return tuple(
             sorted(
                 evidence,

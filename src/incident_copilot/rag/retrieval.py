@@ -77,6 +77,7 @@ class HybridRetriever:
         if len(document_ids) != len(set(document_ids)):
             raise ValueError("ingest input contains duplicate document IDs")
 
+        # 所有切分与向量先在临时变量中完成; 任一步失败都不会修改现有索引。
         new_chunks = self._splitter.split_documents(tuple(documents))
         embeddings = self._embedding.embed_many([chunk.text for chunk in new_chunks])
         embedded_records = tuple(
@@ -101,6 +102,7 @@ class HybridRetriever:
         for chunk in new_chunks:
             updated_chunks[chunk.chunk_id] = chunk
 
+        # 向量后端先原子替换目标文档, 成功后才发布新的词法和内存视图。
         self._vector_store.replace_documents(document_ids, embedded_records)
         all_chunks = tuple(sorted(updated_chunks.values(), key=lambda item: item.chunk_id))
         self._lexical_index.rebuild(all_chunks)
@@ -119,6 +121,7 @@ class HybridRetriever:
         读取 query/top_k/metadata filter;返回 original/rewritten query、排序命中和
         索引规模。Citation 始终来自原 KnowledgeChunk, 不由检索器重新编造。
         """
+        # 改写只扩展已知缩写和短语, 原始查询仍保留在返回结果中用于审计。
         rewritten = self._rewriter.rewrite(request.query)
         # 先扩大候选池再融合,最终仍严格裁剪到用户请求的 top_k。
         candidate_k = min(200, max(request.top_k * self._candidate_multiplier, 20))
@@ -142,6 +145,7 @@ class HybridRetriever:
         for source_name, candidates in (("bm25", lexical), ("vector", vector)):
             for rank, candidate in enumerate(candidates, start=1):
                 chunk_id = candidate.chunk.chunk_id
+                # RRF 只累加名次倒数, 避免直接比较 BM25 分数和余弦相似度这两种量纲。
                 fused_scores[chunk_id] += 1.0 / (self._rrf_k + rank)
                 sources[chunk_id].add(source_name)
                 chunks[chunk_id] = candidate.chunk
@@ -160,6 +164,7 @@ class HybridRetriever:
             if len(unique_ids) == request.top_k:
                 break
 
+        # 两路都排名第一是理论最大分, 用它把展示分数规范到 0 到 1。
         maximum_rrf_score = 2.0 / (self._rrf_k + 1)
         hits = tuple(
             SearchHit(

@@ -77,6 +77,7 @@ class OfflineEvaluationRunner:
         output_dir.mkdir(parents=True, exist_ok=True)
         raw_path = output_dir / "raw-results.jsonl"
         results: list[EvaluationSampleResult] = []
+        # 整次运行复用同一个本地索引, 避免每个样例重复摄取知识导致不可比开销。
         retriever, _ = build_fixture_retriever()
 
         with self._tracing_context():
@@ -84,6 +85,7 @@ class OfflineEvaluationRunner:
                 try:
                     result = await self._run_sample(sample, retriever=retriever, run_id=run_id)
                 except Exception as exc:  # 保留为数据,使聚合结果仍可追踪
+                    # 单样例失败转成原始结果, 不能中断整批或从分母中悄悄消失。
                     result = EvaluationSampleResult(
                         sample_id=sample.sample_id,
                         status=SampleStatus.FAILED,
@@ -101,6 +103,7 @@ class OfflineEvaluationRunner:
             encoding="utf-8",
         )
         completed_at = datetime.now(UTC)
+        # 汇总只读取已经落盘的同一组 results, 原始产物与聚合数字可互相核对。
         completed_count = sum(result.status is SampleStatus.COMPLETED for result in results)
         summary = EvaluationSummary(
             run_id=run_id,
@@ -158,6 +161,7 @@ class OfflineEvaluationRunner:
             top_k=sample.retrieval_top_k,
         )
 
+        # Graph 只获得事故与 Fixture Provider, ground truth 尚未参与任何推理输入。
         graph = build_offline_investigation_graph(fixture_provider=fixture_provider)
         started = perf_counter()
         state = cast(
@@ -179,6 +183,7 @@ class OfflineEvaluationRunner:
         report = state["final_report"]
         # 从这里开始才读取 ground truth 计算质量指标;上方 Graph 已完整结束。
         actual_calls = self._actual_tool_calls(state)
+        # 预测标签由最终报告透明分类得到, 不直接复制数据集中的 failure_type。
         predicted_failure_type = classify_failure_type(report.root_cause)
         root_recall = root_cause_term_recall(
             report.root_cause, sample.ground_truth.root_cause_terms
@@ -226,6 +231,7 @@ class OfflineEvaluationRunner:
         """从真实 StepResult 重建跨轮次工具调用, 不只查看最后一轮 plan。"""
         calls: list[ActualToolCall] = []
         for result in state.get("completed_steps", ()):
+            # completed_steps 经 Reducer 汇总所有轮次, 比读取最后一个 plan 更完整。
             arguments = {key: json_argument_value(value) for key, value in result.arguments.items()}
             calls.append(
                 ActualToolCall(
@@ -242,6 +248,7 @@ class OfflineEvaluationRunner:
         try:
             from langsmith import tracing_context
         except ImportError:
+            # 默认关闭时缺少 SDK 是正常离线路径; 只有显式请求 tracing 才报配置错误。
             if self._enable_langsmith:
                 raise RuntimeError(
                     "LangSmith tracing was requested but the SDK is unavailable"
@@ -260,6 +267,7 @@ class OfflineEvaluationRunner:
         def render(value: float | None) -> str:
             return "N/A" if value is None else f"{value:.4f}"
 
+        # Markdown 与 JSON Summary 来自同一强类型对象, 不单独重新计算任何指标。
         return "\n".join(
             (
                 "# IncidentCopilot Offline Evaluation",

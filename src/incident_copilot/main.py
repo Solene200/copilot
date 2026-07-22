@@ -40,6 +40,7 @@ def _build_runtime_graph(
     Prometheus 暂时不可用,应用也能启动,失败会在实际工具调用处被归一化和降级。
     """
     if settings.metrics_backend is MetricsBackend.PROMETHEUS:
+        # 仅替换 MetricsProvider, 日志、Trace、变更等端口仍使用可复现 Fixture 降级数据。
         return build_mixed_investigation_graph(
             metrics_provider=PrometheusMetricsProvider(
                 settings.prometheus_base_url,
@@ -67,6 +68,7 @@ def create_app(
     创建 Checkpointer、Graph、Repository 和 Service。该函数只负责依赖装配与 HTTP
     协议注册,不承担调查逻辑。
     """
+    # 配置只在组合根读取一次, 下游组件通过构造参数接收依赖而不自行读取环境变量。
     resolved_settings = settings or get_settings()
     configure_logging(resolved_settings.log_level)
 
@@ -106,6 +108,7 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.settings = resolved_settings
+    # 异常处理器先注册, 所有路由抛出的领域与校验异常都使用统一响应结构。
     register_exception_handlers(app)
     app.include_router(health_router)
     app.include_router(investigations_router, prefix=resolved_settings.api_prefix)

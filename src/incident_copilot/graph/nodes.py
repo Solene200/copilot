@@ -103,10 +103,11 @@ class InvestigationNodes:
 
         State 读取: ``incident.services``、``deadline_at``。
         State 写入: ``deadline_exceeded``、可信工具 attempt 上限; 已超时时额外写
-        ``stop_reason``。
+        停止原因字段 ``stop_reason``。
         """
         if not state["incident"].services:
             raise ValueError("investigation requires at least one normalized service")
+        # Registry 是工具重试策略的可信来源; 模型不能自行提高某个工具的尝试次数。
         deadline_exceeded = self._clock() >= state["deadline_at"]
         update: InvestigationState = {
             "deadline_exceeded": deadline_exceeded,
@@ -147,6 +148,7 @@ class InvestigationNodes:
         evidence_sufficient 和 stop_reason, 然后跳转 refine。
         """
         report = state["final_report"]
+        # 只把真正需要审批的动作暴露给审核者, 避免低风险建议制造无意义中断。
         high_risk_actions = tuple(
             step.action
             for step in report.remediation_steps
@@ -163,10 +165,12 @@ class InvestigationNodes:
         # 人工输入同样是不可信边界,必须重新通过 Pydantic 校验。
         feedback = HumanFeedback.model_validate(raw_feedback)
         if feedback.action is ReviewAction.ACCEPT:
+            # 接受操作直接结束当前 thread, 不再重新执行报告或工具节点。
             return Command(
                 update={"human_feedback": feedback, "review_completed": True},
                 goto="__end__",
             )
+        # “追加研究”清除上一轮停止结论, 但预算计数不会清零, 因而无法绕过硬上限。
         return Command(
             update={
                 "human_feedback": feedback,
@@ -187,6 +191,7 @@ class InvestigationNodes:
         """
         step = state["current_step"]
         started_at = self._clock()
+        # Send 分支只拿到本步骤允许的物理尝试数, Registry 无法消耗其他分支的额度。
         context = QueryContext(
             correlation_id=f"{state['incident'].incident_id}:{step.step_id}",
             deadline=state["deadline_at"],
@@ -196,6 +201,7 @@ class InvestigationNodes:
             # Registry 统一负责参数 Schema、白名单、超时、重试和输出边界。
             result = await self._registry.execute(step.tool_name, step.arguments, context)
         except ToolError as exc:
+            # 工具失败被转换为可合并的 State 数据; 单个 Provider 失败不会使整个 Graph 崩溃。
             completed_at = self._clock()
             error = self._tool_error(step.step_id, step.tool_name, exc, completed_at)
             attempts = exc.attempts if isinstance(exc, ToolExecutionError) else 1
@@ -219,6 +225,7 @@ class InvestigationNodes:
             }
 
         completed_at = self._clock()
+        # 完整 Evidence 在 Provider 边界校验后投影为轻量引用, 再进入有界 Graph State。
         refs = tuple(EvidenceRef.from_evidence(item) for item in result.evidence)
         step_result = StepResult(
             step_id=step.step_id,
@@ -247,6 +254,7 @@ class InvestigationNodes:
         State 写入: ``deadline_exceeded``; 命中硬边界时写 ``stop_reason``。
         """
         deadline_exceeded = self._clock() >= state["deadline_at"]
+        # 先构造包含本节点判断的临时 State, 再复用统一预算函数, 避免各节点规则漂移。
         projected = state.copy()
         projected["deadline_exceeded"] = deadline_exceeded
         update: InvestigationState = {"deadline_exceeded": deadline_exceeded}
@@ -264,6 +272,7 @@ class InvestigationNodes:
         """
         context = self._model_context(state, ModelTask.HYPOTHESES)
         call = await self._call_structured(state, context, HypothesesOutput)
+        # 真实模型不可用或输出校验失败时, Fake Model 只负责生成结构合法的诚实降级结果。
         output = call.value or await self._fallback(context, HypothesesOutput)
         return {
             "hypotheses": output.hypotheses,
@@ -283,6 +292,7 @@ class InvestigationNodes:
         evidence_by_id = {item.evidence_id: item for item in state.get("evidence", ())}
         verified: list[Hypothesis] = []
         for hypothesis in state.get("hypotheses", ()):
+            # LLM 返回的 Evidence ID 是不可信外键, 只能保留当前 State 中真实存在的记录。
             supporting_ids = tuple(
                 item for item in hypothesis.supporting_evidence_ids if item in evidence_by_id
             )
@@ -293,6 +303,7 @@ class InvestigationNodes:
             )
             supporting_sources = {evidence_by_id[item].source_type for item in supporting_ids}
             contradicting_sources = {evidence_by_id[item].source_type for item in contradicting_ids}
+            # 状态由多源证据覆盖决定, 而不是照抄模型声明的 supported/rejected。
             if contradicting_ids and len(contradicting_sources) >= len(supporting_sources):
                 status = HypothesisStatus.REJECTED
             elif supporting_ids and len(supporting_sources) >= 2:
@@ -300,10 +311,12 @@ class InvestigationNodes:
             else:
                 status = HypothesisStatus.INCONCLUSIVE
             confidence = hypothesis.confidence
+            # 单源或无证据假设强制压低置信度, 防止语言模型给出没有依据的高分。
             if status is HypothesisStatus.REJECTED or not supporting_ids:
                 confidence = min(confidence, 0.2)
             elif len(supporting_sources) < 2:
                 confidence = min(confidence, 0.55)
+            # 受影响服务同样从被验证证据反推, 不信任模型自由填写的服务名称。
             affected_services = tuple(
                 dict.fromkeys(
                     evidence_by_id[item].service
@@ -330,6 +343,7 @@ class InvestigationNodes:
             HypothesisStatus.INCONCLUSIVE: 3,
             HypothesisStatus.REJECTED: 4,
         }
+        # 报告默认取第一条作为 leading hypothesis, 所以此处排序是业务优先级的一部分。
         verified.sort(
             key=lambda item: (
                 status_rank[item.status],
@@ -354,12 +368,14 @@ class InvestigationNodes:
             output = await self._fallback(context, SufficiencyOutput)
         else:
             output = call.value
+        # 模型的 sufficient 只是候选意见; 至少一个受支持假设和两个来源才满足硬条件。
         supported = any(
             item.status is HypothesisStatus.SUPPORTED for item in state.get("hypotheses", ())
         )
         sources = {item.source_type for item in state.get("evidence", ())}
         sufficient = output.sufficient and supported and len(sources) >= 2
         deadline_exceeded = self._clock() >= state["deadline_at"]
+        # 路由函数需要看到“本次模型调用之后”的累计预算, 因此先在副本中投影增量。
         projected: InvestigationState = state.copy()
         projected["evidence_sufficient"] = sufficient
         projected["deadline_exceeded"] = deadline_exceeded
@@ -393,11 +409,13 @@ class InvestigationNodes:
         """
         context = self._model_context(state, ModelTask.REPORT)
         call = await self._call_structured(state, context, ReportDraftOutput)
+        # 模型只提供文字草稿; 证据、引用、置信度和统计数据全部由可信代码重建。
         draft = call.value or await self._fallback(context, ReportDraftOutput)
         completed_at = self._clock()
         evidence = state.get("evidence", ())
         evidence_by_id = {item.evidence_id: item for item in evidence}
         hypotheses = state.get("hypotheses", ())
+        # verify_hypotheses 已按状态、置信度和证据数排序, 第一项才可作为主假设。
         leading = hypotheses[0] if hypotheses else None
         supporting_ids = leading.supporting_evidence_ids if leading is not None else ()
         rejected = tuple(item for item in hypotheses if item.status is HypothesisStatus.REJECTED)
@@ -416,6 +434,7 @@ class InvestigationNodes:
             evidence_by_id[item] for item in contradicting_ids if item in evidence_by_id
         )
         if not supporting:
+            # 没有主假设证据时只选高相关证据作调查摘要, 仍不会把根因标记为 probable。
             supporting = tuple(item for item in evidence if item.relevance_score >= 0.75)[:20]
         affected_services = (
             leading.affected_services
@@ -424,6 +443,7 @@ class InvestigationNodes:
                 dict.fromkeys(item.service for item in supporting if item.service is not None)
             )
         )
+        # Citation 必须从真实 EvidenceRef 提取并按 citation_id 去重, 模型草稿无权新增。
         citations = tuple(
             {
                 item.citation.citation_id: item.citation for item in (*supporting, *contradicting)
@@ -438,6 +458,7 @@ class InvestigationNodes:
             else ReportDisposition.INCONCLUSIVE
         )
         source_counts = Counter(item.source_type for item in evidence)
+        # 缺失来源、降级错误和停止原因都会进入 limitations, 避免报告隐藏调查缺口。
         missing_sources = [source.value for source in SourceType if source_counts[source] == 0]
         limitations = (
             [f"missing evidence sources: {', '.join(missing_sources)}"] if missing_sources else []
@@ -450,6 +471,7 @@ class InvestigationNodes:
         usage = add_usage(state.get("model_usage", ModelUsage()), call.usage)
         total_model_calls = state.get("model_call_count", 0) + call.call_count
         duration_ms = max(0, int((completed_at - state["started_at"]).total_seconds() * 1_000))
+        # 到这里才一次性构造领域报告, Pydantic 会再次校验引用和字段之间的契约。
         report = IncidentReport(
             report_id=f"rpt_{state['incident'].incident_id.removeprefix('inc_')}",
             incident_id=state["incident"].incident_id,
@@ -529,6 +551,7 @@ class InvestigationNodes:
         context = self._model_context(state, ModelTask.PLAN, round_number=round_number)
         call = await self._call_structured(state, context, PlanOutput)
         output = call.value or await self._fallback(context, PlanOutput)
+        # 工具白名单来自 Registry; 模型输出未知工具时直接丢弃, 不进入后续 Send。
         allowed = set(self._registry.tool_names)
         completed_queries = {item.query_key for item in state.get("completed_steps", ())}
         seen_queries: set[str] = set()
@@ -537,6 +560,7 @@ class InvestigationNodes:
             if step.tool_name not in allowed:
                 continue
             query_key = stable_query_key(step.tool_name, step.arguments)
+            # query_key 同时过滤历史已执行查询和本计划内部重复, 保证恢复与重放幂等。
             if query_key in completed_queries or query_key in seen_queries:
                 continue
             seen_queries.add(query_key)
@@ -552,6 +576,7 @@ class InvestigationNodes:
                 )
             )
         steps = tuple(normalized_steps)
+        # plan_id 由规范化步骤派生, 相同输入在重放时会产生相同标识。
         plan_hash = hashlib.sha256(
             "|".join(step.step_id for step in steps).encode("utf-8")
         ).hexdigest()[:16]
@@ -564,6 +589,7 @@ class InvestigationNodes:
             rationale=output.rationale,
         )
         deadline_exceeded = self._clock() >= state["deadline_at"]
+        # 将本次模型用量投影到累计值后再判断预算, 防止最后一次调用结束后仍继续分发工具。
         projected = state.copy()
         projected["deadline_exceeded"] = deadline_exceeded
         projected["model_call_count"] = state.get("model_call_count", 0) + call.call_count
@@ -597,6 +623,7 @@ class InvestigationNodes:
         """
         remaining = max(0, state["max_model_calls"] - state.get("model_call_count", 0))
         prior_usage = state.get("model_usage", ModelUsage())
+        # 离线模式没有厂商 tokenizer, 统一采用可复现的字符数估算并明确标记 estimated。
         estimated_input_tokens = max(1, len(context.model_dump_json()) // 4)
         tokens_exhausted = (
             state.get("stop_reason") is StopReason.TOKEN_BUDGET_EXHAUSTED
@@ -607,6 +634,7 @@ class InvestigationNodes:
             state.get("stop_reason") is StopReason.DEADLINE_EXCEEDED
             or self._clock() >= state["deadline_at"]
         )
+        # 结构化输出最多尝试两次; 硬预算不足时一次也不调用 Provider。
         max_attempts = 0 if tokens_exhausted or deadline_exceeded else min(2, remaining)
         call_count = 0
         errors: list[InvestigationError] = []
@@ -666,6 +694,7 @@ class InvestigationNodes:
                 )
                 break
             except (ValidationError, ValueError, TypeError) as exc:
+                # Schema 错误允许有限修复重试, 但原始未校验 payload 永远不会传给下游。
                 errors.append(self._model_error(context.task, context.research_round, attempt, exc))
                 if (
                     prior_usage.input_tokens
@@ -677,6 +706,7 @@ class InvestigationNodes:
                     tokens_exhausted = True
                     break
             except Exception as exc:
+                # 连接类异常与内部异常分类保存, 最终报告只展示脱敏后的结构化错误。
                 errors.append(
                     self._model_error(
                         context.task,
@@ -691,6 +721,7 @@ class InvestigationNodes:
                     )
                 )
             else:
+                # 只有 Pydantic 校验成功的结构值才作为本节点结果返回。
                 return StructuredCall(value, call_count, usage, tuple(errors))
         if max_attempts == 0:
             if deadline_exceeded:
@@ -719,6 +750,7 @@ class InvestigationNodes:
             >= state["max_estimated_tokens"]
         ):
             tokens_exhausted = True
+        # 失败后只传播最强的硬停止原因; 普通格式错误会由调用节点进入 Fake 降级。
         stop_reason: StopReason | None = None
         if deadline_exceeded:
             stop_reason = StopReason.DEADLINE_EXCEEDED
@@ -729,6 +761,7 @@ class InvestigationNodes:
         return StructuredCall(None, call_count, usage, tuple(errors), stop_reason)
 
     async def _fallback(self, context: ModelContext, schema: type[OutputT]) -> OutputT:
+        # Fake Provider 仍经过同一输出 Schema, 降级路径不会绕开结构化校验。
         response = await self._fallback_model.complete(context)
         return schema.model_validate(response.payload)
 
@@ -740,6 +773,7 @@ class InvestigationNodes:
         round_number: int | None = None,
     ) -> ModelContext:
         incident = state["incident"]
+        # 只给模型有界摘要和 Evidence ID, 不把大块原始日志或秘密载荷复制进上下文。
         evidence_summaries = tuple(
             {
                 "evidence_id": item.evidence_id,
@@ -770,6 +804,7 @@ class InvestigationNodes:
     def _tool_error(
         self, step_id: str, tool_name: str, exc: ToolError, occurred_at: datetime
     ) -> InvestigationError:
+        # Registry 执行错误保留类别/重试信息; 参数等前置错误统一归为验证失败。
         if isinstance(exc, ToolExecutionError):
             category = {
                 "timeout": ErrorCategory.TIMEOUT,
@@ -804,6 +839,7 @@ class InvestigationNodes:
         *,
         category: ErrorCategory = ErrorCategory.MALFORMED_RESPONSE,
     ) -> InvestigationError:
+        # 原始异常不进入 Graph State, 只保留稳定任务、类别和尝试次数。
         del exc
         return InvestigationError(
             error_id=self._error_id("model", task.value, str(round_number), str(attempt)),

@@ -46,8 +46,11 @@ def create_initial_state(
     """
     if not incident.services:
         raise ValueError("investigation requires at least one service")
+    # options 来自 API 请求或调用方; 未传时使用经过 Pydantic 校验的安全默认预算。
     policy = options or InvestigationOptions()
+    # started_at 和 deadline_at 必须使用同一个注入时钟, 否则固定时钟测试会误判超时。
     started_at = clock()
+    # 初始 State 显式写全累计字段的单位元, 让后续 Reducer 只处理节点返回的增量。
     return InvestigationState(
         incident=incident,
         pending_steps=(),
@@ -142,10 +145,12 @@ def _dispatch_batch(
     )
     selected: list[tuple[InvestigationStep, int]] = []
     for step in candidates[:limit]:
+        # Registry 的重试上限按工具配置, Graph 还要用调查级剩余预算再次收紧。
         configured_limit = state.get("tool_attempt_limits", {}).get(step.tool_name, 1)
         attempt_allowance = min(configured_limit, remaining_attempts)
         if attempt_allowance <= 0:
             break
+        # 在创建 Send 前预扣每个分支的最大尝试数, 避免并行分支各自看到同一份余额。
         selected.append((step, attempt_allowance))
         remaining_attempts -= attempt_allowance
     if not selected:
@@ -192,6 +197,7 @@ def build_investigation_graph(
     builder.add_node("refine_investigation", nodes.refine_investigation)
     builder.add_node("generate_report", nodes.generate_report)
     if require_human_review:
+        # destinations 只声明节点可能去向; 真正选择由 human_review 返回的 Command 决定。
         builder.add_node(
             "human_review",
             nodes.human_review,
@@ -239,6 +245,7 @@ def build_investigation_graph(
         route_after_judge,
         path_map=route_targets,
     )
+    # refine 会生成下一轮增量计划, 随后复用与首轮完全相同的有界分发入口。
     builder.add_conditional_edges(
         "refine_investigation",
         dispatch_evidence_collection,

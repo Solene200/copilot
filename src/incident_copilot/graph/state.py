@@ -33,6 +33,7 @@ ItemT = TypeVar("ItemT", bound=BaseModel)
 
 
 def _canonical_model(item: BaseModel) -> str:
+    # 规范 JSON 为内容相同的模型提供稳定比较键, 不受字典插入顺序影响。
     return json.dumps(
         item.model_dump(mode="json"),
         ensure_ascii=False,
@@ -58,11 +59,13 @@ def _merge_bounded_by_id(
     for item in (*left, *right):
         item_id = identity(item)
         current = merged.get(item_id)
+        # 同一 ID 载荷冲突时不采用“后写覆盖”, 而是选固定排序键更小的版本。
         if current is None or (rank(item), _canonical_model(item)) < (
             rank(current),
             _canonical_model(current),
         ):
             merged[item_id] = item
+    # 冲突解决后再次稳定排序并裁剪, 从而让并行完成顺序不影响最终 State。
     return tuple(
         sorted(
             merged.values(),
@@ -79,6 +82,7 @@ def merge_evidence(
     读取两个分支的 EvidenceRef 增量,按 evidence_id 去重并优先保留高相关、高可靠
     证据。State 只保存轻量引用, 不保存完整原始 payload。
     """
+    # 相关性和可靠性越高 rank 越小, 超过上限时优先留下最有用的轻量引用。
     return _merge_bounded_by_id(
         left,
         right,

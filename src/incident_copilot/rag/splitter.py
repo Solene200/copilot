@@ -59,17 +59,20 @@ class MarkdownSplitter:
     def split(self, document: KnowledgeDocument) -> tuple[KnowledgeChunk, ...]:
         """切分单份文档,但不跨越明确的 Markdown 标题边界。"""
         chunk_texts: list[tuple[tuple[str, ...], str]] = []
+        # 先建立标题章节, 再在章节内部按 Token 切分, 让每个 Chunk 保留语义路径。
         for section in self._sections(document):
             for text in self._split_section(section):
                 chunk_texts.append((section.path, text))
 
         chunks: list[KnowledgeChunk] = []
         for ordinal, (section_path, text) in enumerate(chunk_texts):
+            # ordinal 与内容哈希共同构成稳定 ID, 同一文档重复摄取不会制造重复 Chunk。
             content_hash = content_sha256(text)
             stable_suffix = (
                 f"{document.document_id.removeprefix('doc_')}_{ordinal}_{content_hash[:12]}"
             )
             chunk_id = f"chunk_{stable_suffix}"
+            # Citation 在切分时绑定原文位置; 检索阶段只转发, 不重新生成来源信息。
             citation = Citation.for_content(
                 content=text,
                 citation_id=f"cit_{stable_suffix}",
@@ -109,6 +112,7 @@ class MarkdownSplitter:
         def flush() -> None:
             body = "\n".join(body_lines).strip()
             if body:
+                # 遇到新标题时先保存旧章节, 空章节不进入索引。
                 sections.append(_Section(current_path, body))
 
         for line in document.content.split("\n"):
@@ -120,6 +124,7 @@ class MarkdownSplitter:
             body_lines.clear()
             level = len(heading.group(1))
             title = heading.group(2).strip()
+            # 用标题级别截断栈, 例如从 ### 返回 ## 时会丢弃旧的三级路径。
             heading_stack[level - 1 :] = [title]
             current_path = tuple(heading_stack)
         flush()
@@ -136,11 +141,13 @@ class MarkdownSplitter:
         if len(body_tokens) <= available:
             return (normalize_document_text(f"{prefix}\n{section.body}"),)
 
+        # step 小于窗口大小, 相邻 Chunk 保留配置的上下文重叠。
         step = available - self._overlap_tokens
         chunks: list[str] = []
         start = 0
         while start < len(body_tokens):
             end = min(start + available, len(body_tokens))
+            # 使用正则匹配的字符偏移切原文, 不用 Token 重新拼接, 从而保留标点与格式。
             start_offset = 0 if start == 0 else body_tokens[start].start()
             end_offset = (
                 len(section.body) if end == len(body_tokens) else body_tokens[end - 1].end()

@@ -25,6 +25,7 @@ class RagKnowledgeProvider:
         self, query: SearchRunbooksInput, context: QueryContext
     ) -> Sequence[Evidence]:
         del context
+        # Tool Schema 被翻译为 RAG metadata filter, 确保只召回当前服务的 Runbook。
         request = SearchQuery(
             query=query.query,
             top_k=query.limit,
@@ -33,6 +34,7 @@ class RagKnowledgeProvider:
                 document_types=(DocumentType.RUNBOOK,),
             ),
         )
+        # 当前 Retriever 是同步 CPU/内存实现, 放到工作线程避免阻塞 FastAPI 事件循环。
         result = await asyncio.to_thread(self._retriever.search, request)
         return self._to_evidence(
             result.hits, service=query.service, collected_at=result.retrieved_at
@@ -42,6 +44,7 @@ class RagKnowledgeProvider:
         self, query: SearchSimilarIncidentsInput, context: QueryContext
     ) -> Sequence[Evidence]:
         del context
+        # effective_before/after 在检索层限制历史窗口, 当前事故之后的文档不会成为答案。
         request = SearchQuery(
             query=query.query,
             top_k=query.limit,
@@ -64,6 +67,7 @@ class RagKnowledgeProvider:
         evidence: list[Evidence] = []
         for hit in hits:
             chunk = hit.chunk
+            # 检索命中转换为统一 Evidence, Citation 直接沿用切分阶段保存的原始来源。
             evidence.append(
                 Evidence(
                     evidence_id=f"ev_knowledge_{chunk.content_hash[:24]}",

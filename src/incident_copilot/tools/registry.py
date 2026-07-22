@@ -71,6 +71,7 @@ class ToolDefinition(Generic[InputT]):
     max_retries: int = 1
 
     def __post_init__(self) -> None:
+        # 注册时一次性验证策略边界, execute 热路径无需反复检查静态配置。
         if re.fullmatch(r"[a-z][a-z0-9_]{1,63}", self.name) is None:
             raise ValueError("tool name must contain lowercase letters, digits, and underscores")
         if not self.expected_sources:
@@ -131,6 +132,7 @@ class ToolRegistry:
         执行顺序:白名单 → 调用预算 → Pydantic 参数 → deadline/timeout → Provider
         → Evidence 边界校验 → 结构化结果。只有 retryable 错误才会重试。
         """
+        # 第一道边界是工具名白名单: 未注册名称在解析参数前就被拒绝。
         definition = self._tools.get(name)
         if definition is None:
             raise ToolNotFoundError(f"unknown tool: {name}")
@@ -150,6 +152,7 @@ class ToolRegistry:
         )
 
         attempts = 0
+        # 工具自身重试策略与 Graph 分配额度取更小值, 两层预算缺一不可。
         max_attempts = min(definition.max_retries + 1, context.remaining_tool_attempts)
         while attempts < max_attempts:
             attempts += 1
@@ -164,6 +167,7 @@ class ToolRegistry:
                 # 单次 timeout 不能超过调用方传入的全局剩余 deadline。
                 attempt_timeout = min(definition.timeout_seconds, remaining_seconds)
                 try:
+                    # wait_for 覆盖完整 handler, 包括 Provider 网络调用和响应解析时间。
                     evidence = await asyncio.wait_for(
                         definition.handler(tool_input, context),
                         timeout=attempt_timeout,
@@ -177,8 +181,10 @@ class ToolRegistry:
                     )
                     failure.__cause__ = exc
                 except ProviderError as exc:
+                    # 已分类 ProviderError 保留其类别和 retryable 语义, 供下方重试决策使用。
                     failure = exc
                 except Exception as exc:
+                    # 未知异常统一包成不可重试 ProviderError, 防止内部细节穿透工具边界。
                     failure = ProviderError(
                         "provider raised an unexpected error",
                         provider_name="tool-registry",
@@ -224,6 +230,7 @@ class ToolRegistry:
                     "error_category": failure.category.value,
                 },
             )
+            # Graph 只接收稳定 ToolExecutionError, 原始异常通过 cause 链保留给日志与调试。
             raise ToolExecutionError(
                 f"tool execution failed: {name}",
                 tool_name=name,
@@ -252,6 +259,7 @@ class ToolRegistry:
             SearchSimilarIncidentsInput,
         )
         result_limit = tool_input.limit if isinstance(tool_input, bounded_inputs) else 50
+        # 先检查整体数量, 避免恶意或故障 Provider 返回大集合后再逐条处理。
         if len(evidence) > result_limit:
             raise ProviderMalformedResponseError(
                 "provider returned more evidence than requested",
@@ -260,6 +268,7 @@ class ToolRegistry:
             )
         checked: list[Evidence] = []
         for item in evidence:
+            # Evidence 已由 Pydantic 构造仍不等于属于本次查询, 下面继续校验跨对象约束。
             if not isinstance(item, Evidence):
                 raise ProviderMalformedResponseError(
                     "provider returned a non-Evidence value",
@@ -301,6 +310,7 @@ class ToolRegistry:
                     operation=definition.name,
                 )
             if isinstance(tool_input, SearchSimilarIncidentsInput):
+                # 历史事故必须早于当前事故且落在 lookback 窗口内, 防止未来数据泄漏。
                 earliest = tool_input.before_time - timedelta(days=tool_input.lookback_days)
                 if (
                     item.timestamp is None

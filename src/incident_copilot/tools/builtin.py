@@ -54,6 +54,7 @@ def build_tool_registry(
     clock: Clock = utc_now,
 ) -> ToolRegistry:
     """使用注入的 Provider 注册全部七个工具。"""
+    # Registry 统一承载安全策略; 下方闭包只负责把强类型参数转发到对应端口。
     registry = ToolRegistry(retry_backoff_seconds=retry_backoff_seconds, clock=clock)
 
     async def search_logs(query: SearchLogsInput, context: QueryContext) -> Sequence[Evidence]:
@@ -85,6 +86,7 @@ def build_tool_registry(
     ) -> Sequence[Evidence]:
         return await providers.knowledge.search_similar_incidents(query, context)
 
+    # 每项注册同时绑定输入 Schema 和允许的 Evidence 来源, 返回结果会据此二次校验。
     registry.register(
         ToolDefinition(
             "search_logs",

@@ -51,6 +51,7 @@ class InMemoryInvestigationRepository:
     async def create(self, record: InvestigationRecord) -> tuple[InvestigationRecord, bool]:
         async with self._condition:
             if record.idempotency_key is not None:
+                # 同一个 key 只有请求指纹也一致时才视为安全重放, 否则返回冲突。
                 existing_id = self._idempotency.get(record.idempotency_key)
                 if existing_id is not None:
                     existing = self._records[existing_id]
@@ -60,6 +61,7 @@ class InMemoryInvestigationRepository:
                             details={"idempotency_key": record.idempotency_key},
                         )
                     return existing, False
+            # 记录、空事件流和幂等索引在同一个 Condition 临界区内一起发布。
             self._records[record.investigation_id] = record
             self._events[record.investigation_id] = []
             if record.idempotency_key is not None:
@@ -87,6 +89,7 @@ class InMemoryInvestigationRepository:
             current = self._records.get(record.investigation_id)
             if current is None:
                 raise ResourceNotFoundError("Investigation was not found")
+            # expected_version 实现乐观锁, 防止两个并发 resume 相互覆盖状态。
             if current.version != expected_version or record.version != expected_version + 1:
                 raise ResourceConflictError("Investigation changed during the requested operation")
             self._records[record.investigation_id] = record
@@ -99,6 +102,7 @@ class InMemoryInvestigationRepository:
             if events is None:
                 raise ResourceNotFoundError("Investigation was not found")
             expected_sequence = len(events) + 1
+            # 事件日志只允许追加连续序号, SSE 客户端才能使用 Last-Event-ID 可靠续传。
             if event.sequence != expected_sequence:
                 raise ResourceConflictError("Investigation event sequence is not monotonic")
             events.append(event)
@@ -131,11 +135,13 @@ class InMemoryInvestigationRepository:
                 return len(self._events[investigation_id]) > after_sequence
 
             try:
+                # Condition 在新事件写入时唤醒等待者, 避免 SSE 使用高频轮询浪费 CPU。
                 await asyncio.wait_for(
                     self._condition.wait_for(available),
                     timeout=timeout_seconds,
                 )
             except TimeoutError:
+                # 空元组表示心跳窗口内没有新事件, 不是 Repository 失败。
                 return ()
             return tuple(
                 event for event in self._events[investigation_id] if event.sequence > after_sequence

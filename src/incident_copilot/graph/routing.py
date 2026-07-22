@@ -29,6 +29,7 @@ def budget_stop_reason(state: InvestigationState) -> StopReason | None:
     读取 stop_reason、deadline、工具/模型计数和 Token usage;不写 State。返回首个
     命中的硬停止原因, 让所有入口复用相同预算政策。
     """
+    # 已写入 State 的硬停止原因优先保留, 避免后续节点把超时改写成较弱的停止理由。
     existing = state.get("stop_reason")
     if existing in {
         StopReason.DEADLINE_EXCEEDED,
@@ -41,6 +42,7 @@ def budget_stop_reason(state: InvestigationState) -> StopReason | None:
         return StopReason.DEADLINE_EXCEEDED
     if state.get("tool_call_count", 0) >= state["max_tool_calls"]:
         return StopReason.TOOL_BUDGET_EXHAUSTED
+    # 逻辑调用数与物理尝试数分开限制, 防止一次调用的多次重试绕过总预算。
     if state.get("tool_attempt_count", 0) >= state["max_tool_attempts"]:
         return StopReason.TOOL_BUDGET_EXHAUSTED
     if state.get("model_call_count", 0) >= state["max_model_calls"]:
@@ -59,6 +61,7 @@ def decide_after_judge(state: InvestigationState) -> RouteDecision:
     读取预算、evidence_sufficient 和研究轮次;不写 State。只有全部边界允许且证据
     仍不足时才返回 REFINE, 从而保证调查循环有明确上限。
     """
+    # 硬预算的优先级高于模型给出的“证据充分”, 保证过期请求不会继续进入业务节点。
     budget_reason = budget_stop_reason(state)
     if budget_reason is not None:
         return RouteDecision(RouteTarget.REPORT, budget_reason)
@@ -66,6 +69,7 @@ def decide_after_judge(state: InvestigationState) -> RouteDecision:
         return RouteDecision(RouteTarget.REPORT, StopReason.EVIDENCE_SUFFICIENT)
     if state["research_round"] >= state["max_research_rounds"]:
         return RouteDecision(RouteTarget.REPORT, StopReason.MAX_RESEARCH_ROUNDS)
+    # 只有预算仍充足、证据不足且尚有轮次时, 才允许形成 Graph 中的调查回边。
     return RouteDecision(RouteTarget.REFINE, None)
 
 

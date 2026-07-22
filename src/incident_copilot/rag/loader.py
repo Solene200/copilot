@@ -31,8 +31,10 @@ class MarkdownDocumentLoader:
 
         documents: list[KnowledgeDocument] = []
         seen_ids: set[str] = set()
+        # 路径排序保证不同操作系统的文件枚举顺序不会改变索引结果。
         for path in sorted(self._root.rglob("*.md")):
             resolved = path.resolve()
+            # resolve 后再次检查根目录, 防止符号链接把加载器带到知识目录之外。
             if not resolved.is_relative_to(self._root):
                 raise KnowledgeLoadError(f"knowledge path escapes configured root: {path}")
             document = self._load_file(resolved)
@@ -44,6 +46,7 @@ class MarkdownDocumentLoader:
 
     @staticmethod
     def _load_file(path: Path) -> KnowledgeDocument:
+        # 读取前先限制文件大小, 避免异常知识文件一次性占用过多内存。
         if path.stat().st_size > MAX_KNOWLEDGE_FILE_BYTES:
             raise KnowledgeLoadError(f"knowledge document exceeds size limit: {path}")
         raw_text = path.read_text(encoding="utf-8")
@@ -51,6 +54,7 @@ class MarkdownDocumentLoader:
         if not lines or lines[0].strip() != FRONTMATTER_DELIMITER:
             raise KnowledgeLoadError(f"missing TOML frontmatter: {path}")
         try:
+            # 第一对 +++ 之间只解析 TOML, 后面的全部文本才是可检索正文。
             closing_index = next(
                 index
                 for index, line in enumerate(lines[1:], start=1)
@@ -65,6 +69,7 @@ class MarkdownDocumentLoader:
             raise KnowledgeLoadError(f"invalid TOML frontmatter: {path}") from exc
 
         content = "\n".join(lines[closing_index + 1 :])
+        # content_hash 在进入 Schema 前计算, 后续 Chunk 和 Citation 可以追溯原始正文。
         payload = {
             **metadata,
             "content": content,

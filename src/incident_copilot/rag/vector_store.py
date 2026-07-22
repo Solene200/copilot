@@ -63,6 +63,7 @@ class InMemoryVectorStore:
     def delete_documents(self, document_ids: Sequence[str]) -> int:
         targets = set(document_ids)
         deleted = 0
+        # 遍历键快照, 删除底层字典时不会触发“迭代期间大小变化”。
         for chunk_id in tuple(self._records):
             if self._records[chunk_id].chunk.document_id in targets:
                 del self._records[chunk_id]
@@ -71,8 +72,10 @@ class InMemoryVectorStore:
 
     def upsert(self, records: Sequence[EmbeddedChunk]) -> int:
         checked = tuple(records)
+        # 先验证全部向量, 任何一条非法时都不发布部分更新。
         for record in checked:
             self._validate_vector(record.embedding)
+        # 写入副本后一次替换引用, 读者不会观察到处理中间状态。
         updated = dict(self._records)
         for record in checked:
             updated[record.chunk.chunk_id] = record
@@ -85,6 +88,7 @@ class InMemoryVectorStore:
         records: Sequence[EmbeddedChunk],
     ) -> int:
         checked = tuple(records)
+        # replace 先做完整预校验, 再在临时字典中删除旧文档并写入新版本。
         for record in checked:
             self._validate_vector(record.embedding)
         targets = set(document_ids)
@@ -114,6 +118,7 @@ class InMemoryVectorStore:
 
         candidates: list[ScoredChunk] = []
         for record in self._records.values():
+            # 不混搜不同模型或版本生成的向量, 因为它们不处于同一向量空间。
             if (
                 record.embedding_model != embedding_model
                 or record.embedding_version != embedding_version
@@ -122,6 +127,7 @@ class InMemoryVectorStore:
             if not chunk_matches_filter(record.chunk, metadata_filter):
                 continue
             record_norm = math.sqrt(sum(value * value for value in record.embedding))
+            # 查询和记录通过点积/模长计算余弦相似度, 只保留正相关候选。
             dot_product = sum(
                 left * right for left, right in zip(embedding, record.embedding, strict=True)
             )
@@ -133,6 +139,7 @@ class InMemoryVectorStore:
         return tuple(candidates[:top_k])
 
     def _validate_vector(self, embedding: Sequence[float]) -> None:
+        # 维度、有限值和非零向量是余弦计算的三个必要前置条件。
         if len(embedding) != self._dimension:
             raise ValueError(
                 f"embedding dimension {len(embedding)} does not match {self._dimension}"
@@ -190,6 +197,7 @@ class PgVectorStore:
 
     def upsert(self, records: Sequence[EmbeddedChunk]) -> int:
         checked = tuple(records)
+        # 在发送任何 SQL 前验证整批维度和有限值, 降低事务内部分失败概率。
         for record in checked:
             self._validate_vector(record.embedding)
         statement = f"""
@@ -210,6 +218,7 @@ class PgVectorStore:
                 payload = EXCLUDED.payload,
                 embedding = EXCLUDED.embedding
         """.strip()
+        # 所有动态值都使用参数绑定; 只有初始化时校验过的表名进入 SQL 文本。
         for record in checked:
             chunk = record.chunk
             self._session.execute(
@@ -235,6 +244,7 @@ class PgVectorStore:
         document_ids: Sequence[str],
         records: Sequence[EmbeddedChunk],
     ) -> int:
+        # 删除旧 Chunk 与写入新 Chunk 必须在同一事务中, 任一步失败都由 Session 回滚。
         with self._session.transaction():
             self.delete_documents(document_ids)
             return self.upsert(records)
@@ -254,6 +264,7 @@ class PgVectorStore:
         vector = self._vector_literal(embedding)
         clauses = ["embedding_model = %s", "embedding_version = %s"]
         filter_parameters: list[object] = [embedding_model, embedding_version]
+        # metadata filter 被翻译为参数化 SQL 条件, 不在 Python 侧拉取全表后过滤。
         if metadata_filter.services:
             clauses.append("service_tags && %s::text[]")
             filter_parameters.append(list(metadata_filter.services))
@@ -279,6 +290,7 @@ class PgVectorStore:
         rows = self._session.fetch_all(statement, parameters)
         candidates: list[ScoredChunk] = []
         for row in rows:
+            # 数据库 payload 仍是不可信输入, 必须重新通过 EmbeddedChunk Schema。
             payload = row.get("payload")
             record = (
                 EmbeddedChunk.model_validate_json(payload)
@@ -297,11 +309,13 @@ class PgVectorStore:
                 or not math.isfinite(score_value)
             ):
                 raise ValueError("pgvector score must be numeric")
+            # Adapter 再校验数据库计算出的分数, 防止 NaN 或非数字进入融合排序。
             if score_value > 0:
                 candidates.append(ScoredChunk(chunk=record.chunk, score=score_value))
         return tuple(candidates)
 
     def _validate_vector(self, embedding: Sequence[float]) -> None:
+        # 在构造 pgvector 字面量前拒绝维度错误、NaN、无穷值和零向量。
         if len(embedding) != self._dimension:
             raise ValueError(
                 f"embedding dimension {len(embedding)} does not match {self._dimension}"
